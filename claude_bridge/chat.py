@@ -946,6 +946,74 @@ class CLAUDE_OT_select_changed(bpy.types.Operator):
         return {"FINISHED"}
 
 
+_MODEL_EXT = (".glb", ".gltf", ".fbx", ".obj", ".stl", ".ply", ".usd", ".usdz", ".abc")
+
+
+def inbox_dir():
+    p = _prefs()
+    d = bpy.path.abspath(p.inbox_dir) if p and p.inbox_dir else os.path.join(chats_dir(), "inbox")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def import_inbox():
+    """Import model files dropped into the Inbox folder since the last time, each fitted onto the floor
+    (and shrunk/grown to 1 m when its size is absurd, e.g. a model exported in centimetres). Returns lines."""
+    from . import _handle_request
+    d = inbox_dir()
+    seen_path = os.path.join(d, ".imported.json")
+    try:
+        with open(seen_path, encoding="utf-8") as f:
+            seen = json.load(f)
+    except (OSError, ValueError):
+        seen = {}
+    lines = []
+    for fn in sorted(os.listdir(d)):
+        p = os.path.join(d, fn)
+        if os.path.splitext(fn)[1].lower() not in _MODEL_EXT or seen.get(fn) == os.path.getmtime(p):
+            continue
+        r = _handle_request({"ops": [{"op": "import", "path": p, "fit": True, "col": "Inbox"}]})
+        text = r["text"]
+        import re
+        m = re.search(r"dim\(([\d.]+),([\d.]+),([\d.]+)\)", text)
+        if r["ok"] and m and not 0.05 <= max(float(x) for x in m.groups()) <= 30:
+            names = text.splitlines()[0].split(": ", 1)[1].split(" +")[0].split(",")
+            roots = [n for n in names if n in bpy.data.objects and bpy.data.objects[n].parent is None]
+            r2 = _handle_request({"ops": [{"op": "fit", "obj": roots, "longest": 1}]})
+            text += f"\n(size looked wrong, scaled to 1 m) {r2['text']}"
+        seen[fn] = os.path.getmtime(p)
+        lines.append(f"{fn}: {text.splitlines()[-1]}" if r["ok"] else f"{fn}: {text}")
+    with open(seen_path, "w", encoding="utf-8") as f:
+        json.dump(seen, f)
+    return lines
+
+
+class CLAUDE_OT_inbox(bpy.types.Operator):
+    bl_idname = "claude.inbox_import"
+    bl_label = "Import from Inbox"
+    bl_description = ("Import new models (GLB, FBX, OBJ…) dropped into the Inbox folder, at a sensible size and "
+                      "on the floor. Shift+click opens the folder")
+
+    def invoke(self, context, event):
+        if event.shift:
+            bpy.ops.wm.path_open(filepath=inbox_dir())
+            return {"FINISHED"}
+        return self.execute(context)
+
+    def execute(self, context):
+        try:
+            lines = import_inbox()
+        except Exception as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        if not lines:
+            self.report({"INFO"}, f"Inbox is empty: drop model files into {inbox_dir()}")
+            return {"CANCELLED"}
+        for ln in lines:
+            _push("info", "inbox " + ln)
+        return {"FINISHED"}
+
+
 class CLAUDE_OT_attach_clear(bpy.types.Operator):
     bl_idname = "claude.chat_attach_clear"
     bl_label = "Remove attachments"
@@ -1023,6 +1091,7 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         row.operator("claude.chat_attach", text="", icon="WINDOW").kind = "WINDOW"
         row.operator("claude.chat_attach_file", text="", icon="FILE_IMAGE")
         row.operator("claude.chat_paste", text="", icon="PASTEDOWN")
+        row.operator("claude.inbox_import", text="", icon="IMPORT")
         row.operator("claude.chat_copy", text="", icon="COPYDOWN")
         row.prop(wm, "claude_chat_model", text="")
         row.prop(wm, "claude_chat_effort", text="")
@@ -1154,7 +1223,7 @@ def _redraw():
 
 classes = (CLAUDE_OT_chat_send, CLAUDE_OT_chat_stop, CLAUDE_OT_chat_new, CLAUDE_OT_chat_delete, CLAUDE_OT_chat_copy,
            CLAUDE_OT_attach, CLAUDE_OT_attach_file, CLAUDE_OT_paste, CLAUDE_OT_attach_clear, CLAUDE_OT_chat_revert,
-           CLAUDE_OT_select_changed, CLAUDE_OT_chat_handoff, CLAUDE_PT_chat)
+           CLAUDE_OT_select_changed, CLAUDE_OT_chat_handoff, CLAUDE_OT_inbox, CLAUDE_PT_chat)
 
 _keymaps = []
 

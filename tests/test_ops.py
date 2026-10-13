@@ -427,6 +427,42 @@ def t_animation():
     assert bpy.data.objects["Path"].data.animation_data is not None
 
 
+@test
+def t_fit_col_rename_curve():
+    fresh()
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "big.obj")
+    # A model "exported in centimetres": 200 units tall, floating
+    ok, out = run({"op": "add", "type": "cube", "name": "Giant", "dims": [50, 50, 200], "loc": [0, 0, 300]},
+                  {"op": "export", "path": p})
+    fresh()
+    ok, out = run({"op": "import", "path": p, "fit": {"height": 1.8}, "col": "Props"})
+    assert ok and "fit" in out, out
+    o = bpy.context.scene.objects[0]
+    bpy.context.view_layer.update()
+    lo, hi = ops._wbox([o])
+    assert abs(hi.z - lo.z - 1.8) < 1e-3 and abs(lo.z) < 1e-4, (lo, hi)
+    assert o.users_collection[0].name == "Props"
+    ok, out = run({"op": "fit", "obj": o.name, "longest": 1, "at": [2, 3], "faces": 4})
+    assert ok and "dim(" in out, out
+    # Collections and renames
+    ok, out = run(*[{"op": "add", "type": "cylinder", "name": f"L{i}", "loc": [x, 0, 0]} for i, x in enumerate([3, 1, 2])],
+                  {"op": "col", "name": "Table", "obj": ["L0", "L1", "L2"], "color": "green"},
+                  {"op": "rename", "obj": ["L0", "L1", "L2"], "seq": "Leg_{n}", "sort": "x"})
+    assert ok, out
+    assert [bpy.data.objects[f"Leg_{n}"].location.x for n in (1, 2, 3)] == [1, 2, 3]
+    assert len(bpy.data.collections["Table"].objects) == 3 and bpy.data.collections["Table"].color_tag == "COLOR_04"
+    ok, out = run({"op": "rename", "obj": ["Leg_1", "Leg_2"], "seq": "Same"})
+    assert not ok and "same name" in out
+    # Curves: pipe and lathe vase
+    ok, out = run({"op": "curve", "name": "Pipe", "pts": [[0, 0, 0], [1, 0, 0], [1, 1, 1]], "bevel": 0.05, "mat": "#888888"},
+                  {"op": "curve", "name": "Vase", "lathe": [[0, 0], [0.15, 0.02], [0.2, 0.2], [0.08, 0.4], [0.1, 0.5]]})
+    assert ok, out
+    vase = bpy.data.objects["Vase"]
+    assert vase.type == "MESH" and abs(vase.dimensions.z - 0.5) < 1e-3 and abs(vase.dimensions.x - 0.4) < 0.01, tuple(vase.dimensions)
+    assert bpy.data.objects["Pipe"].type == "CURVE" and abs(bpy.data.objects["Pipe"].data.bevel_depth - 0.05) < 1e-6
+
+
 def main():
     failed = 0
     for fn in TESTS:

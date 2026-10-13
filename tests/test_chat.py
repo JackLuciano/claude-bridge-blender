@@ -319,6 +319,22 @@ def t_usage_and_handoff():
 
 
 @test
+def t_inbox():
+    from claude_bridge import ops
+    ops.op_new({})
+    chat.new_chat()
+    d = chat.inbox_dir()  # import_inbox runs batches in-process: no bridge needed
+    ops.run_batch([{"op": "add", "type": "cube", "name": "Huge", "dims": [100, 100, 100], "loc": [0, 0, 500]},
+                   {"op": "export", "path": os.path.join(d, "huge.obj")}])
+    ops.op_new({})
+    lines = chat.import_inbox()
+    assert len(lines) == 1 and "scaled to 1 m" in lines[0], lines
+    o = bpy.data.collections["Inbox"].objects[0]
+    assert abs(max(o.dimensions) - 1) < 1e-3, tuple(o.dimensions)
+    assert chat.import_inbox() == [], "already imported files are skipped"
+
+
+@test
 def t_missing_cli():
     chat.new_chat()
     orig = chat.find_claude

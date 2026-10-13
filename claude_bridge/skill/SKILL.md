@@ -34,7 +34,13 @@ JPEG. Every op replies with one short line, so trust the replies and keep image 
 - **Detail**: bevel every hard-surface box (`width` 0.005–0.02, `segments` 3); soft furniture (cushions, sofa) gets
   `subsurf` levels 2 with a bevel or a slightly smaller inner box so it doesn't melt into a blob; `smooth:true` on
   round things. Cylinders: `args:{vertices:48}` for smooth curves.
-- Name every object meaningfully (`Sofa_Seat`, `Table_Leg_1`); parent parts with `set{parent}` for grouping.
+- Name every object meaningfully (`Sofa_Seat`, `Table_Leg_1`); parent parts with `set{parent}` for grouping, and put
+  each asset in its own collection (`col:"Sofa"` on `add`/`dup`/`cam`, or `col{name,obj}`). Tidy names with
+  `rename{obj,seq:"Leg_{n}",sort:"x"}`.
+- Round, swept or turned shapes: `curve` — pipes/cables/rails `curve{pts,bevel:0.02,type:"smooth"}`, vases, bottles,
+  lamp shades and turned legs `curve{lathe:[[r,z],...]}` (profile spun around Z). Much better than stacked cylinders.
+- Downloaded or imported models: `import{path,fit:{height:1.8}}` or `fit{obj,height|longest}` afterwards: real size,
+  sitting on the floor.
 - Repeated parts: `dup{obj,n,by}` or `mod{type:"array"}`; symmetric parts: `mod{type:"mirror"}`.
 - Rounded look: `mod{type:"bevel",props:{width:0.02,segments:3}}`; smooth organic: `subsurf` + `smooth:true`.
 - Cut holes: `mod{type:"bool",props:{object:"Cutter",operation:"DIFFERENCE"}}`, then `set{obj:"Cutter",hide:true}`.

@@ -18,7 +18,10 @@ Refs: obj = name | [names] | "sel" | "active". Angles deg. Colors "#rrggbb" or [
 scene{filter,type} info{obj} get{path} prop{path,value}  (path e.g. "scene.render.fps", "Cube.data.energy", "objects.Cube.location")
 add{type:cube|sphere|ico|cylinder|cone|plane|circle|torus|monkey|grid|empty|text|curve|camera|point|sun|spot|area, name,loc,rot,scale,dims,size,mat,smooth,body,energy,color,args{}}
 set{obj,loc,rot,scale,dims,name,hide,parent,smooth,props{dotted.attr:val}}  move{obj,by,rot,scale}
-del{obj} dup{obj,n,by,linked,name} select{obj|"all"|"none",active,add} join{obj}
+del{obj} dup{obj,n,by,linked,name,tree} select{obj|"all"|"none",active,add} join{obj}   (add/dup/cam take col:"Name")
+col{name,obj,parent,hide,exclude,color} rename{obj,seq:"Leg_{n}",sort:x|y|z|name,prefix,suffix,find,replace}
+curve{name,pts[[x,y,z]..],type:poly|smooth,cyclic,bevel,fill,lathe[[r,z]..],steps,mesh,mat}  (pipes, cables, vases, turned legs)
+fit{obj,height|longest|dims,at,floor,apply,faces}  (normalize imports; import{path,fit:true|{height}})
 mat{obj,name,color,metal,rough,alpha,transmission,ior,emit,emit_strength,coat,spec,slot}
 tex{obj|mat,kind:wood|fabric|marble|noise|brick|checker|tiles|leather|concrete,color1,color2,scale,bump,rough[min,max]}  (procedural texture)
 mod{obj,type:bevel|subsurf|array|mirror|solidify|bool|decimate|weld|wireframe|screw|displace|remesh|nodes|...,name,props{},apply}
@@ -39,7 +42,7 @@ py{code}  (last resort; set `out` to return)"""
 # Mirrors ops.OPS (this process has no bpy); tests/test_integration.py checks they match.
 OP_NAMES = ["scene", "info", "get", "prop", "add", "set", "move", "del", "dup", "select", "join", "mat", "tex", "mod",
             "apply", "aim", "cam", "view", "bop", "py", "undo", "redo", "save", "open", "new", "import", "export",
-            "render", "world", "place", "check", "api", "key", "anim", "con"]
+            "render", "world", "place", "check", "api", "key", "anim", "con", "fit", "col", "rename", "curve"]
 
 TOOLS = [
     {
