@@ -29,7 +29,7 @@ aim{obj,at} cam{name,loc,at,lens,active}
 view{preset:front|back|left|right|top|bottom|camera|persp|ortho, orbit[yaw,pitch], zoom, dist, at, frame:"sel"|"all"|name, shading:solid|material|rendered|wireframe}
 bop{id:"mesh.subdivide",args{},obj,edit,ctx:"view3d"}  (any bpy.ops operator)
 world{color,strength | hdri:studio|interior|forest|city|courtyard|night|sunrise|sunset|path,rot | sky:true,sun_elev,sun_rot,sun | bg}
-render{path,res[w,h],pct,samples,engine} import{path} export{path} save{path} open{path} new{keep} undo{n} redo{n}
+render{path,res[w,h],pct,samples,engine,preview,look,max}  (look:true returns the image; settings restored) import{path} export{path} save{path} open{path} new{keep} undo{n} redo{n}
 py{code}  (last resort; set `out` to return)"""
 
 # Mirrors ops.OPS (this process has no bpy); tests/test_integration.py checks they match.
@@ -93,17 +93,23 @@ def blender(req: dict) -> dict:
         return {"ok": False, "text": f"ERR Blender not reachable on {HOST}:{PORT} ({e}). Is the Claude Bridge addon enabled?"}
 
 
+def _images(r):
+    out = []
+    for p in ([r["image"]] if r.get("image") else []) + list(r.get("images") or []):
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                out.append({"type": "image", "data": base64.b64encode(f.read()).decode(), "mimeType": "image/jpeg"})
+    return out
+
+
 def call_tool(name: str, args: dict) -> dict:
     if name == "bl":
         r = blender({"ops": args.get("ops", [])})
-        return {"content": [{"type": "text", "text": r.get("text", "")}], "isError": not r.get("ok", False)}
+        content = _images(r) + [{"type": "text", "text": r.get("text", "")}]
+        return {"content": content, "isError": not r.get("ok", False)}
     if name == "look":
         r = blender({"look": args})
-        content = []
-        if r.get("image") and os.path.exists(r["image"]):
-            with open(r["image"], "rb") as f:
-                content.append({"type": "image", "data": base64.b64encode(f.read()).decode(), "mimeType": "image/jpeg"})
-        content.append({"type": "text", "text": r.get("text", "")})
+        content = _images(r) + [{"type": "text", "text": r.get("text", "")}]
         return {"content": content, "isError": not r.get("ok", False)}
     return {"content": [{"type": "text", "text": f"unknown tool {name}"}], "isError": True}
 
