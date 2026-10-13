@@ -601,6 +601,34 @@ def t_risky():
     assert len(r) == 5 and "UserThing" in r[0] and "Mine" not in r[0] and r[1].startswith("run Python"), r
 
 
+@test
+def t_room():
+    fresh()
+    ok, out = run({"op": "room", "pts": [[0, 0], [5, 0], [5, 4], [0, 4]], "h": 2.6, "t": 0.12, "ceiling": True,
+                   "openings": [{"wall": 0, "at": 1, "w": 0.9}, {"wall": 1, "at": 1.2, "w": 1.6, "h": 1.2, "sill": 0.9}]})
+    assert ok and "4 walls" in out and "2 openings" in out, out
+    col = bpy.data.collections["Room"]
+    names = {o.name for o in col.objects}
+    for n in ("Room_Wall_1", "Room_Wall_2", "Room_Wall_3", "Room_Wall_4", "Room_Floor", "Room_Ceiling",
+              "Room_Frame_1_1", "Room_Frame_2_2", "Room_Glass_2_2"):
+        assert n in names, (n, names)
+    bpy.context.view_layer.update()
+    w1 = bpy.data.objects["Room_Wall_1"]
+    lo, hi = ops._wbox([w1])
+    assert abs((hi.x - lo.x) - 5.12) < 1e-3 and abs(hi.z - 2.6) < 1e-4, (lo, hi)
+    # The door is a real hole: a ray through its centre passes the wall
+    from mathutils.bvhtree import BVHTree
+    t = ops._bvh(w1)
+    hit = t.ray_cast(mathutils.Vector((1.45, -1, 1.0)), mathutils.Vector((0, 1, 0)), 2)
+    assert hit[0] is None, hit
+    hit = t.ray_cast(mathutils.Vector((3.5, -1, 1.0)), mathutils.Vector((0, 1, 0)), 2)
+    assert hit[0] is not None
+    ok, out = run({"op": "room", "name": "Bad", "pts": [[0, 0], [2, 0], [2, 2]], "openings": [{"wall": 0, "at": 1.5, "w": 1}]})
+    assert not ok and "doesn't fit" in out, out
+    ok, out = run({"op": "check", "only": ["floating"]})
+    assert ok and "Room_" not in out, out
+
+
 def main():
     failed = 0
     for fn in TESTS:

@@ -1630,6 +1630,8 @@ def _grid(views, size, a, raw, out):
     tw, th = _tile_size(size // cols, region.width / max(1, region.height))
     canvas = np.zeros((rows * th, cols * tw, 4), dtype=np.float32)
     base = {k: a[k] for k in ("shading",) if k in a}
+    if base:
+        op_view(base)  # applies to every tile, the camera one included
     frame = a.get("frame")
     if not frame:
         # Frame the actual subject: big flat planes (floors, ground) would shrink everything else to a dot.
@@ -1799,4 +1801,4 @@ def run_batch(batch):
 
 
 # Ops in other modules register themselves into OPS on import.
-from . import anim, assets, build, meshedit, nodes  # noqa: E402,F401
+from . import anim, assets, build, meshedit, nodes, room  # noqa: E402,F401
