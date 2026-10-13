@@ -1098,8 +1098,10 @@ def op_check(a):
         trees = {}
 
         def asset(o):
-            # Parts of one asset (same non-scene collection) are meant to touch and intersect.
-            cols = [c for c in o.users_collection if c != sc.collection]
+            # Parts of one asset (same small collection) are meant to touch and intersect. The default
+            # "Collection" that holds everything is not an asset.
+            cols = [c for c in o.users_collection if c != sc.collection and not c.name.startswith("Collection")
+                    and len(c.all_objects) <= max(2, len(roots) // 2)]
             return cols[0].name if cols else None
         for i, (o1, lo1, hi1) in enumerate(boxes):
             for o2, lo2, hi2 in boxes[i + 1:]:

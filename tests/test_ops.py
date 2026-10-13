@@ -285,7 +285,7 @@ def t_dims_bake():
         assert tuple(round(x, 4) for x in o.dimensions) == d, (n, tuple(o.dimensions))
     # Shared mesh: not baked; tex compensates through the mapping node instead
     ok, out = run({"op": "add", "type": "cube", "name": "S1"}, {"op": "dup", "obj": "S1", "linked": True, "name": "S2"},
-                  {"op": "set", "obj": "S2", "dims": [6, 2, 2]}, {"op": "tex", "obj": "S2", "kind": "wood"})
+                  {"op": "set", "obj": "S2", "dims": [6, 2, 2]}, {"op": "tex", "obj": "S2", "kind": "marble"})
     s2 = bpy.data.objects["S2"]
     assert ok and round(s2.scale.x, 3) == 3, (out, tuple(s2.scale))
     mapping = next(n for n in s2.active_material.node_tree.nodes if n.type == "MAPPING")
