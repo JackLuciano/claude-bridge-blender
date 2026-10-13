@@ -24,7 +24,8 @@ curve{name,pts[[x,y,z]..],type:poly|smooth,cyclic,bevel,fill,lathe[[r,z]..],step
 fit{obj,height|longest|dims,at,floor,apply,faces}  (normalize imports; import{path,fit:true|{height}})
 mat{obj,name,color,metal,rough,alpha,transmission,ior,emit,emit_strength,coat,spec,slot}
 tex{obj|mat,kind:wood|fabric|marble|noise|brick|checker|tiles|leather|concrete,color1,color2,scale,bump,rough[min,max]}  (procedural texture)
-mod{obj,type:bevel|subsurf|array|mirror|solidify|bool|decimate|weld|wireframe|screw|displace|remesh|nodes|...,name,props{},apply}
+mod{obj,type:bevel|subsurf|array|mirror|solidify|bool|decimate|weld|wireframe|screw|displace|remesh|nodes|...,name,props{},inputs{GN input:val},apply}
+nodes{mat|obj|world|gn|comp, add{id:type|alias}, set{"id.Socket":v,"id.prop":v,"ramp.0":"#hex"}, link["a.Out>b.In"], del[ids], show, preset:"scatter"+instance,density,scale}  (ids: bsdf,out,bg,in,rl)
 apply{obj,mod:name|"all",xform:loc|rot|scale|all}
 edit{obj,sel:all|keep|+z|-y..|{normal,tol}|{mat}|{above}|[ids],do:[{extrude:d|[x,y,z]},{inset:w|{w,depth}},{bevel:{w,seg}},{cut:{axis,n}},{bisect},{delete},{move},{scale},{subdivide},{mat},{smooth}]}  (steps chain on new faces)
 place{obj,on:"floor"|name,at:[x,y]|"center",against,side:+x|-x|+y|-y,gap}  (exact contact by real bounds)
@@ -43,7 +44,7 @@ py{code}  (last resort; set `out` to return)"""
 # Mirrors ops.OPS (this process has no bpy); tests/test_integration.py checks they match.
 OP_NAMES = ["scene", "info", "get", "prop", "add", "set", "move", "del", "dup", "select", "join", "mat", "tex", "mod",
             "apply", "aim", "cam", "view", "bop", "py", "undo", "redo", "save", "open", "new", "import", "export",
-            "render", "world", "place", "check", "api", "key", "anim", "con", "fit", "col", "rename", "curve", "edit"]
+            "render", "world", "place", "check", "api", "key", "anim", "con", "fit", "col", "rename", "curve", "edit", "nodes"]
 
 TOOLS = [
     {

@@ -495,6 +495,47 @@ def t_mesh_edit():
     assert not ok and "shares its mesh" in out
 
 
+@test
+def t_nodes():
+    fresh()
+    ok, out = run({"op": "add", "type": "sphere", "name": "Ball", "mat": "Rusty"},
+                  {"op": "nodes", "mat": "Rusty",
+                   "add": {"n": "noise", "r": {"type": "ramp"}, "b": "bump"},
+                   "set": {"n.Scale": 12, "n.noise_dimensions": "3D", "r.0": "#3a2010", "r.1": "#b0602a", "r.1.pos": 0.7},
+                   "link": ["n.Fac>r.Fac", "r.Color>bsdf.Base Color", "n>b.Height", "b.Normal>bsdf.Normal"]},
+                  {"op": "nodes", "mat": "Rusty", "show": True})
+    assert ok and ("n.Fac>r.Fac" in out or "n.Factor>r.Factor" in out) and "r.Color>bsdf.Base Color" in out, out
+    nt = bpy.data.materials["Rusty"].node_tree
+    ramp = next(n for n in nt.nodes if n.type == "VALTORGB")
+    assert abs(ramp.color_ramp.elements[1].position - 0.7) < 1e-6
+    ok, out = run({"op": "nodes", "mat": "Rusty", "link": ["n.Nope>r.Fac"]})
+    assert not ok and "has no output 'Nope'" in out and "Fac" in out, out
+    ok, out = run({"op": "nodes", "mat": "Rusty", "add": {"x": "flubber"}})
+    assert not ok and "unknown node type" in out
+    # Geometry nodes: scatter rocks over a ground plane
+    ok, out = run({"op": "add", "type": "plane", "name": "Ground", "dims": [10, 10, 0]},
+                  {"op": "add", "type": "ico", "name": "Rock", "size": 0.2, "loc": [0, 0, -5]},
+                  {"op": "nodes", "gn": "Scatter", "obj": "Ground", "preset": "scatter", "instance": "Rock", "density": 2})
+    assert ok and "scatter Rock" in out, out
+    dg = bpy.context.evaluated_depsgraph_get()
+    # Object Info outputs geometry, so instances show up as instanced geometry of Ground, not as Rock objects.
+    n_inst = sum(1 for i in dg.object_instances if i.is_instance and i.parent and i.parent.original.name == "Ground")
+    assert 50 < n_inst < 400, n_inst
+    # GN modifier inputs by interface name
+    ng = bpy.data.node_groups["Scatter"]
+    ng.interface.new_socket("Amount", in_out="INPUT", socket_type="NodeSocketFloat")
+    ok, out = run({"op": "mod", "obj": "Ground", "name": "Scatter", "inputs": {"Amount": 3.5}})
+    md = bpy.data.objects["Ground"].modifiers["Scatter"]
+    ident = next(i.identifier for i in ng.interface.items_tree if i.name == "Amount")
+    props = getattr(md, "properties", None)
+    val = getattr(props.inputs, ident).value if props is not None and hasattr(props, "inputs") else md[ident]
+    assert ok and abs(val - 3.5) < 1e-6, out
+    # World and compositor trees resolve
+    ok, out = run({"op": "nodes", "world": True, "set": {"bg.Strength": 0.5}},
+                  {"op": "nodes", "comp": True, "add": {"g": "glare"}})
+    assert ok, out
+
+
 def main():
     failed = 0
     for fn in TESTS:
