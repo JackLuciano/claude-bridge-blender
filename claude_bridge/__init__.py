@@ -294,6 +294,10 @@ class ClaudeBridgePrefs(bpy.types.AddonPreferences):
         name="Safe mode", default=False,
         description="Hold risky ops (py, new, open, deleting objects Claude didn't make) until you approve them, "
                     "and keep file paths inside the .blend folder, temp and the Inbox")
+    persistent_cli: bpy.props.BoolProperty(
+        name="Keep Claude running between messages (experimental)", default=False,
+        description="One claude process per chat: faster replies after the first, and Stop interrupts cleanly. "
+                    "Closed after 15 idle minutes")
     teach_mode: bpy.props.BoolProperty(
         name="Show how-to hints", default=False,
         description="Under each tool call, show the menu path or shortcut to do it by hand")
@@ -308,6 +312,7 @@ class ClaudeBridgePrefs(bpy.types.AddonPreferences):
         col.prop(self, "send_context")
         col.prop(self, "safe_mode")
         col.prop(self, "teach_mode")
+        col.prop(self, "persistent_cli")
         col.prop(self, "claude_path")
         col.prop(self, "chats_dir")
         col.prop(self, "inbox_dir")
@@ -338,12 +343,10 @@ class CLAUDE_OT_toggle(bpy.types.Operator):
 
 def mcp_add_command():
     """`claude mcp add` line for Claude Code, using Blender's bundled Python and this addon's server."""
-    import os
-    import sys
-    server = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
+    server =os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
     p = prefs()
     env = f" -e CLAUDE_BRIDGE_PORT={p.port}" if p and p.port != 9877 else ""
-    return f'claude mcp add -s user{env} blender-bridge -- "{sys.executable}" "{server}"'
+    return f'claude mcp add -s user{env} blender-bridge -- "{chat.blender_python()}" "{server}"'
 
 
 class CLAUDE_OT_copy_mcp(bpy.types.Operator):

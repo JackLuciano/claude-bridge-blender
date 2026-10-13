@@ -165,9 +165,9 @@ def chat_with_fake_cli(P):
     from claude_bridge import chat
     out = tempfile.mkdtemp()
     fake_dir = os.path.join(ROOT, "tests", "fake_claude")
-    os.environ.update(FAKE_CLAUDE_OUT=out, FAKE_CLAUDE_PY=sys.executable, ANTHROPIC_API_KEY="sk-should-not-leak")
+    os.environ.update(FAKE_CLAUDE_OUT=out, FAKE_CLAUDE_PY=chat.blender_python(), ANTHROPIC_API_KEY="sk-should-not-leak")
     os.environ.setdefault("CLAUDE_BRIDGE_CHATS", tempfile.mkdtemp())
-    P.safe_mode = False
+    P.safe_mode = P.persistent_cli = False
     P.send_context, P.custom_instructions, P.claude_path, P.chats_dir = True, "", "", ""
     orig = chat.find_claude
     chat.find_claude = lambda: os.path.join(fake_dir, "claude.cmd" if os.name == "nt" else "claude")
@@ -206,6 +206,28 @@ def chat_with_fake_cli(P):
     check("fake cli: chat history", ("claude", "Done.") in hist and any(r == "diff" and "+1 FakeCube" in t for r, t in hist),
           hist)
     check("fake cli: usage", chat.usage_line().startswith("ctx 6.0k"), chat.usage_line())
+    check("fake cli: streamed draft cleared", chat.state["draft"] == "", chat.state["draft"])
+
+    # Experimental resident process: two messages, one CLI process
+    P.persistent_cli = True
+    chat.find_claude = lambda: os.path.join(fake_dir, "claude.cmd" if os.name == "nt" else "claude")
+    try:
+        for prompt in ("second", "third"):
+            chat.send(prompt, "opus")
+            deadline = time.time() + 60
+            while chat.state["busy"] and time.time() < deadline:
+                claude_bridge._pump()
+                time.sleep(0.01)
+        alive = chat._session[0] is not None and chat._session[0].alive()
+        chat.new_chat()  # closes the resident process
+    finally:
+        chat.find_claude = orig
+        P.persistent_cli = False
+    pids = [json.load(open(os.path.join(out, f)))["pid"] for f in ("fake_claude_call.json", "fake_claude_call_2.json")
+            if os.path.exists(os.path.join(out, f))]
+    check("persistent cli: one process, two replies", alive and len(pids) == 2 and pids[0] == pids[1]
+          and "FakeCube2" in bpy.data.objects, (alive, pids, list(bpy.data.objects.keys())))
+    check("persistent cli: closed with the chat", chat._session[0] is None)
 
 
 def main():
