@@ -28,6 +28,7 @@ check{obj,only:[floating,overlap,frame,scale,images,light,cam]}  (measured probl
 aim{obj,at} cam{name,loc,at,lens,active}
 view{preset:front|back|left|right|top|bottom|camera|persp|ortho, orbit[yaw,pitch], zoom, dist, at, frame:"sel"|"all"|name, shading:solid|material|rendered|wireframe}
 bop{id:"mesh.subdivide",args{},obj,edit,ctx:"view3d"}  (any bpy.ops operator)
+api{id|path|node|search}  (look up operator args, writable props, node sockets in this Blender; use before guessing)
 world{color,strength | hdri:studio|interior|forest|city|courtyard|night|sunrise|sunset|path,rot | sky:true,sun_elev,sun_rot,sun | bg}
 render{path,res[w,h],pct,samples,engine,preview,look,max}  (look:true returns the image; settings restored) import{path} export{path} save{path} open{path} new{keep} undo{n} redo{n}
 py{code}  (last resort; set `out` to return)"""
@@ -35,7 +36,7 @@ py{code}  (last resort; set `out` to return)"""
 # Mirrors ops.OPS (this process has no bpy); tests/test_integration.py checks they match.
 OP_NAMES = ["scene", "info", "get", "prop", "add", "set", "move", "del", "dup", "select", "join", "mat", "tex", "mod",
             "apply", "aim", "cam", "view", "bop", "py", "undo", "redo", "save", "open", "new", "import", "export",
-            "render", "world", "place", "check"]
+            "render", "world", "place", "check", "api"]
 
 TOOLS = [
     {

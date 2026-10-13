@@ -120,15 +120,70 @@ def _walk(cur, parts):
             cur = getattr(cur, attr) if attr else cur
             key = key.strip("'\"")
             cur = cur[int(key)] if key.lstrip("-").isdigit() else cur[key]
-        else:
+        elif hasattr(cur, p):
             cur = getattr(cur, p)
+        elif hasattr(cur, "get") and cur.get(p) is not None:
+            cur = cur.get(p)  # 'Cube.modifiers.Bevel': a collection item by name
+        else:
+            raise AttributeError(f"'{p}' not found on {getattr(cur, 'name', type(cur).__name__)}")
     return cur
 
 
 def set_path(path, value):
     cur, parts = resolve_path(path)
     holder = _walk(cur, parts[:-1])
-    setattr(holder, parts[-1], value)
+    setattr(holder, parts[-1], _coerce(holder, parts[-1], value))
+
+
+_ID_COLLECTIONS = ("objects", "materials", "node_groups", "collections", "images", "meshes", "cameras", "lights",
+                   "worlds", "textures", "curves", "actions", "fonts")
+
+
+def _find_id(name, rna_type):
+    """Resolve a name to a datablock of the type a pointer property expects (not only objects)."""
+    for coll in _ID_COLLECTIONS:
+        item = getattr(bpy.data, coll).get(name)
+        if item is not None and (rna_type is None or isinstance(item, rna_type)):
+            return item
+    raise ValueError(f"no {rna_type.__name__ if rna_type else 'datablock'} named '{name}'")
+
+
+def _srgb(c):
+    h = c.lstrip("#")
+    return [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)] + ([int(h[6:8], 16) / 255] if len(h) == 8 else [1.0])
+
+
+def _coerce(holder, attr, v):
+    """Convert a JSON value into what this RNA property expects: names -> datablocks, degrees -> radians,
+    '#hex' -> a color of the right length and color space, 'bevel' -> 'BEVEL' for enums."""
+    try:
+        p = holder.bl_rna.properties.get(attr)
+    except AttributeError:
+        return v
+    if p is None:
+        return v
+    if p.type == "POINTER":
+        if isinstance(v, str):
+            return _find_id(v, getattr(bpy.types, p.fixed_type.identifier, None))
+        return v
+    if p.type == "ENUM" and isinstance(v, str) and not p.is_enum_flag:
+        ids = [e.identifier for e in p.enum_items]
+        if v not in ids:
+            for cand in (v.upper(), v.upper().replace(" ", "_")):
+                if cand in ids:
+                    return cand
+        return v
+    if p.type == "FLOAT":
+        n = p.array_length
+        if p.subtype in ("COLOR", "COLOR_GAMMA") and (isinstance(v, str) or isinstance(v, (list, tuple))):
+            c = _srgb(v) if isinstance(v, str) and p.subtype == "COLOR_GAMMA" else list(color(v))
+            return tuple(c[:n]) if n else c[0]
+        if p.subtype in ("ANGLE", "EULER") or p.unit == "ROTATION":
+            if isinstance(v, (int, float)):
+                return math.radians(v)
+            if isinstance(v, (list, tuple)):
+                return [math.radians(x) for x in v]
+    return v
 
 
 def fmt(v):
@@ -231,11 +286,8 @@ def op_get(a):
 
 @op("prop")
 def op_prop(a):
-    """Set any data path. a: path, value."""
-    v = a["value"]
-    if isinstance(v, str) and v.startswith("#") and len(v) in (7, 9):
-        v = color(v)[:3] if "color" in a["path"] and "world" not in a["path"] else color(v)
-    set_path(a["path"], v)
+    """Set any data path. a: path, value (angles in degrees, colors as #hex, datablocks by name)."""
+    set_path(a["path"], a["value"])
     return f"ok {a['path']}"
 
 
@@ -273,7 +325,7 @@ def _apply_xform(o, a):
     if "loc" in a:
         o.location = v3(a, "loc")
     if "rot" in a:
-        o.rotation_euler = rad(v3(a, "rot"))
+        _set_rot(o, v3(a, "rot"))
     if "scale" in a:
         o.scale = v3(a, "scale")
     if "dims" in a:
@@ -319,6 +371,10 @@ def _set_attr(o, path, v):
     """Set a dotted attribute on the object, falling back to its data (e.g. 'energy' on a light)."""
     parts = path.split(".")
     holder = o
+    if o.type in ("LIGHT", "CAMERA") and len(parts) == 1 and hasattr(o.data, path):
+        # 'color' exists on both Object and Light: on lights and cameras the data is what's meant.
+        setattr(o.data, path, _coerce(o.data, path, v))
+        return
     try:
         holder = _walk(o, parts[:-1])
         getattr(holder, parts[-1])
@@ -327,9 +383,7 @@ def _set_attr(o, path, v):
             raise
         holder = _walk(o.data, parts[:-1])
         getattr(holder, parts[-1])  # raise a clear AttributeError if neither has it
-    if isinstance(v, str) and v.startswith("#"):
-        v = color(v)[:len(getattr(holder, parts[-1]))]
-    setattr(holder, parts[-1], v)
+    setattr(holder, parts[-1], _coerce(holder, parts[-1], v))
 
 
 _ADD_TYPES = {"empty": "EMPTY", "text": "FONT", "curve": "CURVE", "camera": "CAMERA",
@@ -415,6 +469,7 @@ def op_set(a):
             o.hide_render = bool(a["hide"])
         if "parent" in a:
             p = bpy.data.objects.get(a["parent"]) if a["parent"] else None
+            bpy.context.view_layer.update()  # matrix_world is stale for objects moved earlier in this batch
             mw = o.matrix_world.copy()
             o.parent = p
             o.matrix_world = mw
@@ -439,8 +494,8 @@ def op_move(a):
         if "by" in a:
             o.location += mathutils.Vector(a["by"])
         if "rot" in a:
-            r = rad(a["rot"])
-            o.rotation_euler = [o.rotation_euler[i] + r[i] for i in range(3)]
+            cur = _get_rot(o)
+            _set_rot(o, [math.degrees(cur[i]) + v3(a, "rot")[i] for i in range(3)])
         if "scale" in a:
             s = a["scale"]
             s = (s, s, s) if isinstance(s, (int, float)) else s
@@ -791,22 +846,66 @@ def op_mod(a):
     for o in objs(a.get("obj")):
         md = o.modifiers.get(a["name"]) if a.get("name") else None
         if md is None:
+            if not a.get("type"):
+                raise ValueError(f"no modifier '{a.get('name')}' on {o.name}; give type to add one")
             t = _MOD_ALIASES.get(a["type"].lower(), a["type"].upper())
             md = o.modifiers.new(a.get("name") or a["type"], t)
         for k, v in a.get("props", {}).items():
-            cur = getattr(md, k)
-            if isinstance(cur, bpy.types.ID) or (cur is None and isinstance(v, str) and bpy.data.objects.get(v)):
-                v = bpy.data.objects.get(v)
-            elif k.endswith("angle") or k == "angle_limit":
-                v = math.radians(v)
-            setattr(md, k, v)
+            if not hasattr(md, k):
+                raise ValueError(f"{md.type.lower()} has no '{k}' (see api{{path:'{o.name}.modifiers.{md.name}'}})")
+            setattr(md, k, _coerce(md, k, v))
+        if md.type == "NODES" and a.get("inputs"):
+            _set_gn_inputs(md, a["inputs"])
         if a.get("apply"):
             with bpy.context.temp_override(object=o, active_object=o):
                 bpy.ops.object.modifier_apply(modifier=md.name)
-            out.append(f"applied {a['type']} on {o.name}")
+            out.append(f"applied {md.type.lower()} on {o.name}")
         else:
             out.append(f"mod {md.name}[{md.type.lower()}] on {o.name}")
     return "\n".join(out)
+
+
+def _set_gn_inputs(md, inputs):
+    """Set Geometry Nodes modifier inputs by their interface name (they're ID properties keyed by identifier)."""
+    ng = md.node_group
+    if ng is None:
+        raise ValueError("geometry nodes modifier has no node group: props{node_group:'Name'} first")
+    socks = {i.name: i for i in ng.interface.items_tree if getattr(i, "in_out", None) == "INPUT"}
+    for name, v in inputs.items():
+        s = socks.get(name)
+        if s is None:
+            raise ValueError(f"'{name}' not an input of {ng.name} (inputs: {','.join(socks)})")
+        st = getattr(s, "socket_type", "")
+        if isinstance(v, str) and st in ("NodeSocketObject", "NodeSocketMaterial", "NodeSocketCollection", "NodeSocketImage"):
+            v = _find_id(v, getattr(bpy.types, st.replace("NodeSocket", ""), None))
+        elif st == "NodeSocketColor":
+            v = list(color(v))
+        elif st == "NodeSocketRotation" and isinstance(v, (list, tuple)):
+            v = [math.radians(x) for x in v]
+        md[s.identifier] = v
+    md.id_data.update_tag()  # ID-property writes don't trigger re-evaluation by themselves
+
+
+def _set_rot(o, deg):
+    """World-independent local rotation in degrees that respects the object's rotation mode (imports often use
+    quaternions, where setting rotation_euler does nothing visible)."""
+    e = mathutils.Euler(rad(deg), o.rotation_mode if o.rotation_mode in ("XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX") else "XYZ")
+    if o.rotation_mode == "QUATERNION":
+        o.rotation_quaternion = e.to_quaternion()
+    elif o.rotation_mode == "AXIS_ANGLE":
+        ax, ang = e.to_quaternion().to_axis_angle()
+        o.rotation_axis_angle = (ang, *ax)
+    else:
+        o.rotation_euler = e
+
+
+def _get_rot(o):
+    if o.rotation_mode == "QUATERNION":
+        return o.rotation_quaternion.to_euler()
+    if o.rotation_mode == "AXIS_ANGLE":
+        a = o.rotation_axis_angle
+        return mathutils.Quaternion(a[1:], a[0]).to_euler()
+    return o.rotation_euler
 
 
 @op("apply")
@@ -1033,8 +1132,10 @@ def op_aim(a):
     o = obj(a.get("obj"))
     at = a["at"]
     target = bpy.data.objects[at].matrix_world.translation if isinstance(at, str) else mathutils.Vector(at)
-    d = target - o.matrix_world.translation
-    o.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
+    loc, _, sca = o.matrix_world.decompose()
+    d = target - loc
+    # Assign in world space so parented cameras/lights also end up pointing at the target.
+    o.matrix_world = mathutils.Matrix.LocRotScale(loc, d.to_track_quat("-Z", "Y"), sca)
     bpy.context.view_layer.update()
     return summary(o)
 
@@ -1137,6 +1238,66 @@ def op_bop(a):
         if entered:
             bpy.ops.object.mode_set(mode="OBJECT")
     return f"{a['id']} {','.join(res)}"
+
+
+def _prop_line(p, cur=None):
+    t = p.type.lower()
+    if p.type == "ENUM":
+        t = "|".join(e.identifier for e in list(p.enum_items)[:8]) + ("|…" if len(p.enum_items) > 8 else "")
+    elif p.type == "POINTER":
+        t = p.fixed_type.identifier
+    elif getattr(p, "array_length", 0):
+        t += f"[{p.array_length}]"
+    if p.type == "FLOAT" and (p.subtype in ("ANGLE", "EULER") or p.unit == "ROTATION"):
+        t += " deg"
+    s = f"{p.identifier}:{t}"
+    if cur is not None:
+        s += f"={fmt(cur)}"
+    return s
+
+
+@op("api", ro=True)
+def op_api(a):
+    """Look things up in the running Blender instead of guessing. a: id ('mesh.subdivide': operator args),
+    path ('Cube.modifiers.Bevel', 'scene.render': writable props + values), node ('ShaderNodeTexNoise' or
+    'GeometryNodeMeshCube': sockets), search ('bevel': matching operator ids)."""
+    if a.get("id"):
+        cat, fn = a["id"].split(".")
+        rna = getattr(getattr(bpy.ops, cat), fn).get_rna_type()
+        ps = [p for p in rna.properties if p.identifier != "rna_type" and not p.is_hidden]
+        return f"{a['id']}: " + " ".join(_prop_line(p, getattr(p, "default", None) if p.type in ("INT", "FLOAT", "BOOLEAN")
+                                                     and not getattr(p, "array_length", 0) else None) for p in ps[:30])
+    if a.get("path"):
+        cur, parts = resolve_path(a["path"])
+        holder = _walk(cur, parts)
+        ps = [p for p in holder.bl_rna.properties if not p.is_readonly and p.identifier not in ("rna_type", "name")]
+        return f"{a['path']}: " + " ".join(_prop_line(p, getattr(holder, p.identifier, None)) for p in ps[:40])
+    if a.get("node"):
+        t = a["node"]
+        kind = "GeometryNodeTree" if t.startswith(("GeometryNode", "FunctionNode")) else (
+            "CompositorNodeTree" if t.startswith("CompositorNode") else "ShaderNodeTree")
+        ng = bpy.data.node_groups.new("_claude_api", kind)
+        try:
+            n = ng.nodes.new(t)
+            ins = ",".join(f"{s.name}" + (f"={fmt(s.default_value)}" if hasattr(s, "default_value") else "")
+                           for s in n.inputs if s.enabled)
+            outs = ",".join(s.name for s in n.outputs if s.enabled)
+            props = " ".join(_prop_line(p, getattr(n, p.identifier, None)) for p in n.bl_rna.properties
+                             if not p.is_readonly and p.identifier not in bpy.types.Node.bl_rna.properties.keys())
+            return f"{t} in[{ins}] out[{outs}]" + (f" props {props}" if props else "")
+        except RuntimeError as e:
+            raise ValueError(f"unknown node type '{t}' ({e})")
+        finally:
+            bpy.data.node_groups.remove(ng)
+    if a.get("search"):
+        q = a["search"].lower()
+        hits = []
+        for cat in dir(bpy.ops):
+            for fn in dir(getattr(bpy.ops, cat)):
+                if q in fn.lower() or q in cat.lower():
+                    hits.append(f"{cat}.{fn}")
+        return f"{len(hits)} ops: " + " ".join(hits[:20]) + (" …" if len(hits) > 20 else "")
+    raise ValueError("api needs id, path, node or search")
 
 
 @op("py")
