@@ -61,6 +61,14 @@ step("view front + frame", "bl", {"ops": [{"op": "view", "preset": "front", "fra
 step("look front", "look", {"max": 384}, save="1_front.jpg")
 step("look orbit", "look", {"orbit": [45, -20], "zoom": 0.8, "max": 384}, save="2_orbit.jpg")
 step("look camera", "look", {"cam": True, "max": 384}, save="3_camera.jpg")
+before = call("bl", {"ops": [{"op": "view"}]})["content"][-1]["text"]
+step("look views grid", "look", {"views": ["cam", "front", "right", "top"], "max": 512}, save="4_views.jpg")
+after = call("bl", {"ops": [{"op": "view"}]})["content"][-1]["text"]
+print(("PASS" if before == after else "FAIL") + f" views leave the user's view alone ({before} / {after})")
+fails += before != after
+step("render look", "bl", {"ops": [{"op": "render", "engine": "BLENDER_WORKBENCH", "res": [320, 240], "look": True,
+                                    "max": 256}]}, save="5_render.jpg")
+step("check", "bl", {"ops": [{"op": "check"}]})
 step("edit-mode bop", "bl", {"ops": [{"op": "bop", "id": "mesh.subdivide", "obj": "Floor", "edit": True, "args": {"number_cuts": 2}},
                                       {"op": "info", "obj": "Floor"}]})
 step("undo", "bl", {"ops": [{"op": "undo"}, {"op": "info", "obj": "Floor"}]})

@@ -53,11 +53,13 @@ TOOLS = [
     {
         "name": "look",
         "description": "Small JPEG of the user's viewport (or camera view with cam:true). Optional view args "
-                       "(preset, orbit, zoom, frame, shading, dist, at) are applied first. max = longest side px (default 512; use 256-384 when possible).",
+                       "(preset, orbit, zoom, frame, shading, dist, at) are applied first. max = longest side px (default 512; use 256-384 when possible). "
+                       "views:[\"cam\",\"front\",\"right\",\"top\"] = one grid image of several angles for the price of one (leaves the user's view alone).",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "cam": {"type": "boolean"}, "max": {"type": "integer"}, "preset": {"type": "string"},
+                "views": {"type": "array", "items": {"type": "string"}}, "keep": {"type": "boolean"},
                 "orbit": {"type": "array", "items": {"type": "number"}}, "zoom": {"type": "number"},
                 "frame": {"type": "string"}, "shading": {"type": "string"},
             },
