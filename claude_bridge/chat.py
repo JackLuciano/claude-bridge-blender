@@ -160,6 +160,7 @@ def new_chat():
     stop()
     with _lock:
         state.update(chat_id=None, session=None, cost=0.0, history=[], attachments=[])
+    turn.update(mark=None, before=None, after=None, changed=[], pushes=0)
 
 
 reset = new_chat
@@ -580,6 +581,104 @@ def _worker(cmd, message):
         state["busy"] = False
 
 
+# ---------------------------------------------------------------- turn ledger
+
+def snapshot():
+    """Cheap per-object fingerprint of the scene (main thread): enough to say what a turn changed."""
+    snap = {}
+    bpy.context.view_layer.update()  # matrix_world is stale right after a hand edit
+    for o in bpy.context.scene.objects:
+        mats = tuple(m.name for m in getattr(o.data, "materials", []) if m) if o.data else ()
+        snap[o.name] = (o.type, tuple(round(x, 3) for x in o.matrix_world.translation),
+                        tuple(round(x, 2) for x in o.matrix_world.to_euler()),
+                        tuple(round(x, 3) for x in o.dimensions), mats,
+                        tuple(m.type for m in o.modifiers), len(o.data.vertices) if o.type == "MESH" else 0,
+                        o.hide_get())
+    return snap
+
+
+_WHAT = ("type", "moved", "rotated", "resized", "material", "modifiers", "geometry", "visibility")
+
+
+def diff(before, after):
+    """('+2 Lamp,Shade · ~1 Table moved · -1 Cube', [changed or added names]) or ('', [])."""
+    added = [n for n in after if n not in before]
+    removed = [n for n in before if n not in after]
+    changed = []
+    for n in after:
+        if n in before and before[n] != after[n]:
+            what = [_WHAT[i] for i in range(len(_WHAT)) if before[n][i] != after[n][i]]
+            changed.append(f"{n} {'/'.join(what[:2])}")
+    parts = []
+
+    def names(lst):
+        return ", ".join(lst[:4]) + (f" +{len(lst) - 4}" if len(lst) > 4 else "")
+    if added:
+        parts.append(f"+{len(added)} {names(added)}")
+    if changed:
+        parts.append(f"~{len(changed)} {names(changed)}")
+    if removed:
+        parts.append(f"-{len(removed)} {names(removed)}")
+    return " · ".join(parts), added + [c.split(" ")[0] for c in changed]
+
+
+turn = {"mark": None, "before": None, "after": None, "changed": [], "pushes": 0, "file": None}
+
+
+def _bridge_pushes():
+    from . import PUSHES
+    return PUSHES
+
+
+def _turn_start():
+    turn.update(mark=_bridge_pushes(), before=snapshot(), file=bpy.data.filepath)
+
+
+def _turn_end():
+    """Main thread, once a reply is finished: show what changed and remember how to revert it."""
+    if turn["before"] is None:
+        return
+    after = snapshot()
+    text, names = diff(turn["before"], after)
+    turn.update(after=after, changed=names, pushes=_bridge_pushes() - turn["mark"])
+    if text:
+        _push("diff", text)
+
+
+def user_edits_since_turn():
+    """Short note about edits the user made by hand since Claude's last reply (for the next message)."""
+    if turn["after"] is None:
+        return ""
+    text, _ = diff(turn["after"], snapshot())
+    return text
+
+
+def can_revert():
+    """(ok, reason)."""
+    if state["busy"]:
+        return False, "Claude is still working"
+    if not turn["pushes"]:
+        return False, "the last reply changed nothing"
+    if turn["file"] != bpy.data.filepath:
+        return False, "a different file is open"
+    if turn["pushes"] > bpy.context.preferences.edit.undo_steps:
+        return False, "more steps than Blender's undo history keeps"
+    if turn["after"] is not None and snapshot() != turn["after"]:
+        return False, "you edited the scene since; use Ctrl+Z"
+    return True, ""
+
+
+def revert_turn():
+    ok, why = can_revert()
+    if not ok:
+        raise ValueError(why)
+    for _ in range(turn["pushes"]):
+        bpy.ops.ed.undo()
+    n = turn["pushes"]
+    turn.update(pushes=0, after=None, changed=[])
+    _push("info", f"reverted the last reply ({n} step{'s' if n > 1 else ''})")
+
+
 def send(prompt, model="opus", effort=None, ctx=True):
     claude = find_claude()
     if not claude:
@@ -592,6 +691,10 @@ def send(prompt, model="opus", effort=None, ctx=True):
     _push("user", prompt + (f"\n[{len(images)} image{'s' if len(images) > 1 else ''} attached]" if images else ""))
     try:
         line = context_line() if ctx else None
+        edits = user_edits_since_turn() if ctx else ""
+        if edits:
+            line = (line or "") + f"\n[user edits since your last reply: {edits}]"
+        _turn_start()
     except Exception:
         line = None
     state["busy"] = True
@@ -616,8 +719,10 @@ def _plain(text):
     return re.sub(r"^(\s*)[-*]\s+", r"\1• ", text, flags=re.M)
 
 
-_ICON = {"user": "USER", "claude": "LIGHT", "tool": "TOOL_SETTINGS", "error": "ERROR", "info": "INFO"}
-_PREFIX = {"user": "You", "claude": "Claude", "tool": "tool", "error": "error", "info": "info"}
+_ICON = {"user": "USER", "claude": "LIGHT", "tool": "TOOL_SETTINGS", "error": "ERROR", "info": "INFO",
+         "diff": "FILE_REFRESH", "hint": "QUESTION"}
+_PREFIX = {"user": "You", "claude": "Claude", "tool": "tool", "error": "error", "info": "info", "diff": "changed",
+           "hint": "how-to"}
 
 
 class CLAUDE_OT_chat_send(bpy.types.Operator):
@@ -743,6 +848,43 @@ class CLAUDE_OT_paste(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class CLAUDE_OT_chat_revert(bpy.types.Operator):
+    bl_idname = "claude.chat_revert"
+    bl_label = "Revert last reply"
+    bl_description = "Undo everything Claude changed in its last reply, in one click"
+
+    @classmethod
+    def description(cls, context, props):
+        ok, why = can_revert()
+        return cls.bl_description if ok else f"Not available: {why}"
+
+    def execute(self, context):
+        try:
+            revert_turn()
+        except Exception as e:
+            self.report({"WARNING"}, str(e))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class CLAUDE_OT_select_changed(bpy.types.Operator):
+    bl_idname = "claude.chat_select_changed"
+    bl_label = "Select changed"
+    bl_description = "Select and frame the objects Claude added or changed in its last reply"
+
+    def execute(self, context):
+        from . import ops
+        names = [n for n in turn["changed"] if n in bpy.data.objects]
+        if not names:
+            return {"CANCELLED"}
+        ops.op_select({"obj": names})
+        try:
+            ops.op_view({"frame": "sel"})
+        except Exception:
+            pass
+        return {"FINISHED"}
+
+
 class CLAUDE_OT_attach_clear(bpy.types.Operator):
     bl_idname = "claude.chat_attach_clear"
     bl_label = "Remove attachments"
@@ -796,6 +938,12 @@ class CLAUDE_PT_chat(bpy.types.Panel):
                 col.label(text=item[0], icon=item[1])
         if state["busy"]:
             box.label(text="Claude is working…", icon="SORTTIME")
+        elif turn["pushes"] or turn["changed"]:
+            row = box.row(align=True)
+            row.operator("claude.chat_select_changed", icon="RESTRICT_SELECT_OFF")
+            sub = row.row(align=True)
+            sub.enabled = can_revert()[0]
+            sub.operator("claude.chat_revert", text="Revert reply", icon="LOOP_BACK")
 
         if state["attachments"]:
             row = layout.row(align=True)
@@ -914,8 +1062,17 @@ def _chat_set(self, value):
 _last = [None]
 
 
+_was_busy = [False]
+
+
 def _redraw():
     """Redraw the sidebar while Claude streams, so new messages appear live."""
+    if _was_busy[0] and not state["busy"]:
+        try:
+            _turn_end()
+        except Exception as e:
+            _push("error", f"change summary failed: {e}")
+    _was_busy[0] = state["busy"]
     sig = (len(state["history"]), state["busy"], len(state["attachments"]), state["chat_id"])
     if sig != _last[0]:
         _last[0] = sig
@@ -927,7 +1084,8 @@ def _redraw():
 
 
 classes = (CLAUDE_OT_chat_send, CLAUDE_OT_chat_stop, CLAUDE_OT_chat_new, CLAUDE_OT_chat_delete, CLAUDE_OT_chat_copy,
-           CLAUDE_OT_attach, CLAUDE_OT_attach_file, CLAUDE_OT_paste, CLAUDE_OT_attach_clear, CLAUDE_PT_chat)
+           CLAUDE_OT_attach, CLAUDE_OT_attach_file, CLAUDE_OT_paste, CLAUDE_OT_attach_clear, CLAUDE_OT_chat_revert,
+           CLAUDE_OT_select_changed, CLAUDE_PT_chat)
 
 _keymaps = []
 
