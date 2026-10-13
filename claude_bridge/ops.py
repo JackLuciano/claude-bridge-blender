@@ -1674,3 +1674,7 @@ def run_batch(batch):
             ok = False
             break  # stop on first error; earlier ops stay applied
     return results, ok
+
+
+# Ops in other modules register themselves into OPS on import.
+from . import anim  # noqa: E402,F401

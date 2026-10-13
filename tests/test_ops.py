@@ -386,6 +386,47 @@ def t_coercion_and_api():
     assert ok and fwd.dot((-cam.matrix_world.translation).normalized()) > 0.999, out
 
 
+@test
+def t_animation():
+    from claude_bridge import anim
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "Box"},
+                  {"op": "key", "obj": "Box", "f": 1, "loc": [0, 0, 0], "interp": "linear"},
+                  {"op": "key", "obj": "Box", "f": 25, "loc": [4, 0, 0], "ease": "out"},
+                  {"op": "add", "type": "point", "name": "Lamp"},
+                  {"op": "key", "obj": "Lamp", "f": 1, "props": {"energy": 0}},
+                  {"op": "key", "obj": "Lamp", "f": 20, "props": {"energy": 500}})
+    assert ok, out
+    sc = bpy.context.scene
+    sc.frame_set(13)
+    box = bpy.data.objects["Box"]
+    assert 1.5 < box.location.x < 2.5, box.location.x  # linear from frame 1
+    kps = [kp for fc in anim.fcurves(box) if fc.data_path == "location" for kp in fc.keyframe_points]
+    assert kps[0].interpolation == "LINEAR" and kps[1].easing == "EASE_OUT"
+    assert bpy.data.objects["Lamp"].data.animation_data is not None
+    ok, out = run({"op": "anim", "start": 1, "end": 48, "fps": 24, "preset": "turntable"},
+                  {"op": "anim", "preset": "spin", "obj": "Box"},
+                  {"op": "anim", "preset": "pop_in", "obj": "Box", "stagger": 2})
+    assert ok and "turntable" in out, out
+    cam = sc.camera
+    assert cam.parent and cam.parent.name == "Turntable" and sc.frame_end == 48
+    sc.frame_set(25)
+    assert abs(math.degrees(bpy.data.objects["Turntable"].rotation_euler.z) - 180) < 5
+    # Constraints: tracking camera faces its target
+    ok, out = run({"op": "cam", "name": "Cam2", "loc": [6, 6, 3], "active": False},
+                  {"op": "con", "obj": "Cam2", "type": "track", "target": "Box"},
+                  {"op": "add", "type": "curve", "name": "Path"},
+                  {"op": "add", "type": "cube", "name": "Rider", "size": 0.2},
+                  {"op": "con", "obj": "Rider", "type": "follow_path", "target": "Path"})
+    assert ok and "track_to" in out and "follow_path" in out, out
+    bpy.context.view_layer.update()
+    c2 = bpy.data.objects["Cam2"]
+    fwd = c2.matrix_world.to_quaternion() @ mathutils.Vector((0, 0, -1))
+    to_box = (box.matrix_world.translation - c2.matrix_world.translation).normalized()
+    assert fwd.dot(to_box) > 0.99, fwd.dot(to_box)
+    assert bpy.data.objects["Path"].data.animation_data is not None
+
+
 def main():
     failed = 0
     for fn in TESTS:

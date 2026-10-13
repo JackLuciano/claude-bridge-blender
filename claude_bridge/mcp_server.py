@@ -26,6 +26,9 @@ apply{obj,mod:name|"all",xform:loc|rot|scale|all}
 place{obj,on:"floor"|name,at:[x,y]|"center",against,side:+x|-x|+y|-y,gap}  (exact contact by real bounds)
 check{obj,only:[floating,overlap,frame,scale,images,light,cam]}  (measured problems + fix hints; run before the final look)
 aim{obj,at} cam{name,loc,at,lens,active}
+key{obj,f,loc,rot,scale,props{},interp:linear|bezier|constant|bounce|...,ease:in|out|in_out}
+anim{start,end,fps,preset:turntable|spin|pop_in|bounce|float,obj,turns,stagger,height}
+con{obj,type:track|damped_track|follow_path|copy_loc|copy_rot|child_of|limit_dist|floor|...,target,name,props{},animate}
 view{preset:front|back|left|right|top|bottom|camera|persp|ortho, orbit[yaw,pitch], zoom, dist, at, frame:"sel"|"all"|name, shading:solid|material|rendered|wireframe}
 bop{id:"mesh.subdivide",args{},obj,edit,ctx:"view3d"}  (any bpy.ops operator)
 api{id|path|node|search}  (look up operator args, writable props, node sockets in this Blender; use before guessing)
@@ -36,7 +39,7 @@ py{code}  (last resort; set `out` to return)"""
 # Mirrors ops.OPS (this process has no bpy); tests/test_integration.py checks they match.
 OP_NAMES = ["scene", "info", "get", "prop", "add", "set", "move", "del", "dup", "select", "join", "mat", "tex", "mod",
             "apply", "aim", "cam", "view", "bop", "py", "undo", "redo", "save", "open", "new", "import", "export",
-            "render", "world", "place", "check", "api"]
+            "render", "world", "place", "check", "api", "key", "anim", "con"]
 
 TOOLS = [
     {
