@@ -170,6 +170,19 @@ def t_error_stops_batch():
                   {"op": "add", "type": "cube", "name": "Y"})
     assert not ok and "no object 'Nope'" in out
     assert "X" in bpy.data.objects and "Y" not in bpy.data.objects
+    # Clear message for malformed vectors (seen with Haiku)
+    ok, out = run({"op": "add", "type": "cube", "name": "V", "scale": [1, 2]})
+    assert not ok and "'scale' needs 3 numbers" in out, out
+    ok, out = run({"op": "add", "type": "cube", "name": "V2", "loc": [1, 2]})
+    assert not ok and "'loc' needs 3 numbers" in out, out
+    # set falls back to object data: light energy via both shorthand and props
+    ok, out = run({"op": "add", "type": "point", "name": "Lamp"},
+                  {"op": "set", "obj": "Lamp", "energy": 150, "color": "#ffaa55"},
+                  {"op": "set", "obj": "Lamp", "props": {"shadow_soft_size": 0.5}})
+    lamp = bpy.data.objects["Lamp"].data
+    assert ok and lamp.energy == 150 and abs(lamp.shadow_soft_size - 0.5) < 1e-6, out
+    ok, out = run({"op": "set", "obj": "Lamp", "props": {"nonsense_attr": 1}})
+    assert not ok and "nonsense_attr" in out, out
     ok, out = run({"add": {"type": "cube", "name": "Short"}})
     assert ok and "Short" in bpy.data.objects, out
     ok, out = run({"op": "bogus"})

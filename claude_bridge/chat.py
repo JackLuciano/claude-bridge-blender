@@ -27,10 +27,34 @@ MAX_ATTACH = 5
 
 SYSTEM_PROMPT = (
     "You are inside Blender, talking to the user through a small sidebar chat. "
-    "Act on the scene with the `bl` tool (batch several ops per call) and verify visually with `look` "
+    "Act on the scene with the `mcp__blender-bridge__bl` tool (batch several ops per call) and verify visually with `mcp__blender-bridge__look` "
     "(max 384 unless detail matters). Prefer ops over the `py` op. Images the user attaches are screenshots "
     "of their Blender or references. Keep replies to 1-3 short sentences: the user sees the result in their viewport."
 )
+
+SKILL_FILE = os.path.join(ADDON_DIR, "skill", "SKILL.md")
+
+
+def skill_body():
+    """The blender-bridge skill without its frontmatter; appended to every chat session."""
+    try:
+        with open(SKILL_FILE, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    if text.startswith("---"):
+        text = text.split("---", 2)[2]
+    return text.strip()
+
+
+def install_skill(home=None):
+    """Install the skill for Claude Code at ~/.claude/skills/blender-bridge/SKILL.md. Returns the path."""
+    dst_dir = os.path.join(home or os.path.expanduser("~"), ".claude", "skills", "blender-bridge")
+    os.makedirs(dst_dir, exist_ok=True)
+    dst = os.path.join(dst_dir, "SKILL.md")
+    shutil.copyfile(SKILL_FILE, dst)
+    return dst
+
 
 _lock = threading.RLock()
 state = {
@@ -314,7 +338,7 @@ def build_cmd(claude, session=None, model="opus"):
            "--tools=", "--disable-slash-commands", "--setting-sources=",
            "--mcp-config", _mcp_config(), "--strict-mcp-config",
            "--allowedTools", f"mcp__{SERVER}__bl", f"mcp__{SERVER}__look",
-           "--append-system-prompt", SYSTEM_PROMPT]
+           "--append-system-prompt", SYSTEM_PROMPT + "\n\n" + skill_body()]
     if session:
         cmd += ["--resume", session]
     if model and model != "default":
@@ -330,23 +354,33 @@ def _tool_summary(block):
     return f"{name} {json.dumps(inp)[:60]}"
 
 
+def _blocks(ev):
+    """Content blocks of a message event; content may also be a plain string."""
+    c = (ev.get("message") or {}).get("content")
+    if isinstance(c, str):
+        return [{"type": "text", "text": c}]
+    return [b for b in c or [] if isinstance(b, dict)]
+
+
 def handle_event(ev):
     """Turn one stream-json event into chat entries."""
     t = ev.get("type")
     if t == "system" and ev.get("subtype") == "init":
         state["session"] = ev.get("session_id", state["session"])
     elif t == "assistant":
-        for b in ev.get("message", {}).get("content", []):
+        for b in _blocks(ev):
             if b.get("type") == "text" and b.get("text", "").strip():
                 _push("claude", b["text"].strip())
             elif b.get("type") == "tool_use":
                 _push("tool", _tool_summary(b))
     elif t == "user":
-        for b in ev.get("message", {}).get("content", []):
-            if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("is_error"):
+        for b in _blocks(ev):
+            if b.get("type") == "tool_result" and b.get("is_error"):
                 c = b.get("content")
                 txt = c if isinstance(c, str) else " ".join(x.get("text", "") for x in c or [] if isinstance(x, dict))
-                _push("error", txt[:200])
+                # Batch output lists every op; show the failing line, not the successful ones before it.
+                err = [ln for ln in txt.splitlines() if "ERR" in ln]
+                _push("error", (err[0] if err else txt)[:300])
     elif t == "result":
         state["session"] = ev.get("session_id", state["session"])
         state["cost"] += ev.get("total_cost_usd") or 0
@@ -373,9 +407,9 @@ def _worker(cmd, message):
                 continue
             try:
                 ev = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            handle_event(ev)
+                handle_event(ev)
+            except Exception:
+                continue  # one malformed event must not end the chat
             if ev.get("type") == "result":
                 break
         proc.wait(timeout=30)

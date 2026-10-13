@@ -9,7 +9,7 @@ website = "https://github.com/JackLuciano/claude-bridge-blender"
 type = "add-on"
 blender_version_min = "4.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
-tags = ["Interface", "Development"]
+tags = ["User Interface", "Development", "3D View"]
 
 [permissions]
 network = "Listens on 127.0.0.1:9877 for local MCP bridge connections"

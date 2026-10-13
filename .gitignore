@@ -3,3 +3,4 @@ __pycache__/
 tests/_out/
 .remember/
 *.blend1
+dist/

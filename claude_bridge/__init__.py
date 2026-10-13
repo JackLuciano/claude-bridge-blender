@@ -138,6 +138,40 @@ class CLAUDE_OT_toggle(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def mcp_add_command():
+    """`claude mcp add` line for Claude Code, using Blender's bundled Python and this addon's server."""
+    import os
+    import sys
+    server = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
+    return f'claude mcp add -s user blender-bridge -- "{sys.executable}" "{server}"'
+
+
+class CLAUDE_OT_copy_mcp(bpy.types.Operator):
+    bl_idname = "claude.copy_mcp_command"
+    bl_label = "Copy Claude Code setup command"
+    bl_description = "Copy the command that connects Claude Code to this Blender; run it once in a terminal"
+
+    def execute(self, context):
+        context.window_manager.clipboard = mcp_add_command()
+        self.report({"INFO"}, "Copied. Run it once in a terminal, then restart Claude Code.")
+        return {"FINISHED"}
+
+
+class CLAUDE_OT_install_skill(bpy.types.Operator):
+    bl_idname = "claude.install_skill"
+    bl_label = "Install Claude Code skill"
+    bl_description = "Install the blender-bridge skill into ~/.claude/skills so Claude Code knows how to use the tools"
+
+    def execute(self, context):
+        try:
+            path = chat.install_skill()
+        except OSError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Skill installed: {path}")
+        return {"FINISHED"}
+
+
 class CLAUDE_PT_panel(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -149,9 +183,11 @@ class CLAUDE_PT_panel(bpy.types.Panel):
         col = self.layout.column()
         col.label(text=f"{'Running' if _server else 'Stopped'} on {HOST}:{PORT}")
         col.operator("claude.toggle_bridge", text="Stop" if _server else "Start")
+        col.operator("claude.copy_mcp_command", icon="COPYDOWN")
+        col.operator("claude.install_skill", icon="BOOKMARKS")
 
 
-_classes = (CLAUDE_OT_toggle, CLAUDE_PT_panel)
+_classes = (CLAUDE_OT_toggle, CLAUDE_OT_copy_mcp, CLAUDE_OT_install_skill, CLAUDE_PT_panel)
 
 
 def register():

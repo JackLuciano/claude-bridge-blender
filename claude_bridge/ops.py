@@ -229,16 +229,50 @@ _PRIMS = {
 }
 
 
+def v3(a, key):
+    """Validate a 3-vector arg with a message a model can act on (a number means uniform)."""
+    v = a[key]
+    if isinstance(v, (int, float)):
+        return (v, v, v)
+    if not isinstance(v, (list, tuple)) or len(v) != 3:
+        raise ValueError(f"'{key}' needs 3 numbers [x,y,z] (or one number for uniform), got {v!r}")
+    return tuple(v)
+
+
 def _apply_xform(o, a):
     if "loc" in a:
-        o.location = a["loc"]
+        o.location = v3(a, "loc")
     if "rot" in a:
-        o.rotation_euler = rad(a["rot"])
+        o.rotation_euler = rad(v3(a, "rot"))
     if "scale" in a:
-        s = a["scale"]
-        o.scale = (s, s, s) if isinstance(s, (int, float)) else s
+        o.scale = v3(a, "scale")
     if "dims" in a:
-        o.dimensions = a["dims"]
+        o.dimensions = v3(a, "dims")
+
+
+def _light_props(o, a):
+    if o.type == "LIGHT":
+        if "energy" in a:
+            o.data.energy = a["energy"]
+        if "color" in a:
+            o.data.color = color(a["color"])[:3]
+
+
+def _set_attr(o, path, v):
+    """Set a dotted attribute on the object, falling back to its data (e.g. 'energy' on a light)."""
+    parts = path.split(".")
+    holder = o
+    try:
+        holder = _walk(o, parts[:-1])
+        getattr(holder, parts[-1])
+    except AttributeError:
+        if o.data is None:
+            raise
+        holder = _walk(o.data, parts[:-1])
+        getattr(holder, parts[-1])  # raise a clear AttributeError if neither has it
+    if isinstance(v, str) and v.startswith("#"):
+        v = color(v)[:len(getattr(holder, parts[-1]))]
+    setattr(holder, parts[-1], v)
 
 
 @op("add")
@@ -247,8 +281,9 @@ def op_add(a):
     point|sun|spot|area), name, loc, rot, scale, dims, size, mat, plus 'args' for the raw operator."""
     t = a.get("type", "cube")
     extra = dict(a.get("args", {}))
+    loc = v3(a, "loc") if "loc" in a else (0, 0, 0)
     if t in ("point", "sun", "spot", "area"):
-        bpy.ops.object.light_add(type=t.upper(), location=a.get("loc", (0, 0, 0)))
+        bpy.ops.object.light_add(type=t.upper(), location=loc)
     else:
         if t not in _PRIMS:
             raise ValueError(f"unknown type '{t}'")
@@ -256,7 +291,7 @@ def op_add(a):
         if size_kw and "size" in a:
             extra[size_kw] = a["size"]
         cat, fn = idn.split(".")
-        getattr(getattr(bpy.ops, cat), fn)(location=a.get("loc", (0, 0, 0)), **extra)
+        getattr(getattr(bpy.ops, cat), fn)(location=loc, **extra)
     o = bpy.context.active_object
     if a.get("name"):
         o.name = a["name"]
@@ -265,11 +300,7 @@ def op_add(a):
     _apply_xform(o, a)
     if t == "text" and a.get("body"):
         o.data.body = a["body"]
-    if o.type == "LIGHT":
-        if "energy" in a:
-            o.data.energy = a["energy"]
-        if "color" in a:
-            o.data.color = color(a["color"])[:3]
+    _light_props(o, a)
     if "mat" in a:
         m = a["mat"]
         if isinstance(m, (list, tuple)) or (isinstance(m, str) and m.startswith("#")):
@@ -305,9 +336,9 @@ def op_set(a):
         if "smooth" in a and o.type == "MESH":
             for poly in o.data.polygons:
                 poly.use_smooth = bool(a["smooth"])
+        _light_props(o, a)
         for k, v in a.get("props", {}).items():
-            holder = _walk(o, k.split(".")[:-1])
-            setattr(holder, k.split(".")[-1], color(v)[:len(getattr(holder, k.split(".")[-1]))] if isinstance(v, str) and v.startswith("#") else v)
+            _set_attr(o, k, v)
         if "name" in a:
             o.name = a["name"]
         out.append(summary(o))

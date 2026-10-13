@@ -33,6 +33,10 @@ def t_register_roundtrip():
     assert "CLAUDE_PT_chat" in dir(bpy.types)
     assert wm.claude_chat_model == "opus"
     assert wm.claude_chat_list == "NEW"
+    cmd = claude_bridge.mcp_add_command()
+    assert cmd.startswith("claude mcp add -s user blender-bridge -- ") and "mcp_server.py" in cmd
+    bpy.ops.claude.copy_mcp_command()
+    assert wm.clipboard == cmd or bpy.app.background  # clipboard is unavailable headless
     claude_bridge.unregister()
     assert not hasattr(bpy.types.WindowManager, "claude_chat_input")
 
@@ -84,6 +88,13 @@ def t_handle_events():
     assert h[1] == ("tool", "bl: add, mat"), h
     assert h[2][0] == "error" and "no object" in h[2][1], h
     assert chat.state["session"] == "s2"
+    # Regression: string content crashed the worker (seen with Sonnet); errors show the ERR line.
+    chat.handle_event({"type": "user", "message": {"role": "user", "content": "plain string"}})
+    chat.handle_event({"type": "assistant", "message": {"content": ["stray", {"type": "text", "text": "ok"}]}})
+    chat.handle_event({"type": "user", "message": {"content": [{"type": "tool_result", "is_error": True,
+                                                                "content": "mat Wood\n3:set ERR no object 'X'"}]}})
+    assert chat.state["history"][-2] == ("claude", "ok"), chat.state["history"]
+    assert chat.state["history"][-1] == ("error", "3:set ERR no object 'X'"), chat.state["history"]
 
 
 @test
@@ -125,6 +136,19 @@ def t_chat_list_enum():
         assert chat.state["chat_id"] == cid and chat.state["history"][0][1] == "enum chat"
     finally:
         claude_bridge.unregister()
+
+
+@test
+def t_skill():
+    body = chat.skill_body()
+    assert body.startswith("# Working in Blender") and "name:" not in body.splitlines()[0]
+    cmd = chat.build_cmd("claude")
+    assert body in cmd[cmd.index("--append-system-prompt") + 1]
+    home = tempfile.mkdtemp()
+    path = chat.install_skill(home)
+    text = open(path, encoding="utf-8").read()
+    assert path.endswith(os.path.join(".claude", "skills", "blender-bridge", "SKILL.md"))
+    assert text.startswith("---\nname: blender-bridge\ndescription:")
 
 
 @test

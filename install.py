@@ -4,7 +4,8 @@
 
 1. Links (or copies with --copy) claude_bridge into Blender's user addons folder.
 2. Enables the addon and saves preferences (runs Blender headless once).
-3. Registers the MCP server with Claude Code (`claude mcp add -s user blender-bridge ...`).
+3. Registers the MCP server with Claude Code (`claude mcp add -s user blender-bridge ...`)
+   and installs the `blender-bridge` skill into ~/.claude/skills.
 """
 
 import argparse
@@ -36,12 +37,21 @@ def blender_query(blender, expr):
     return next(line[2:] for line in out.splitlines() if line.startswith("@@"))
 
 
+def remove_existing(dst):
+    """Remove a previous install. Links/junctions are only unlinked, never recursed into:
+    rmtree through a junction would delete this repo's source."""
+    if not os.path.lexists(dst):
+        return
+    if os.path.islink(dst):
+        os.remove(dst)
+    elif getattr(os.path, "isjunction", lambda p: False)(dst):
+        os.rmdir(dst)  # removes the junction itself, not its target
+    else:
+        shutil.rmtree(dst)
+
+
 def link(dst):
-    if os.path.lexists(dst):
-        if os.path.islink(dst) or (platform.system() == "Windows" and not os.path.exists(os.path.join(dst, "__init__.py"))):
-            os.remove(dst) if os.path.islink(dst) else os.rmdir(dst)
-        else:
-            shutil.rmtree(dst)
+    remove_existing(dst)
     if platform.system() == "Windows":
         # Junctions need no admin rights.
         subprocess.run(["cmd", "/c", "mklink", "/J", dst, SRC], check=True, capture_output=True)
@@ -62,8 +72,7 @@ def main():
     addons = blender_query(blender, "__import__('bpy').utils.user_resource('SCRIPTS', path='addons', create=True)")
     dst = os.path.join(addons, "claude_bridge")
     if a.copy:
-        if os.path.lexists(dst):
-            shutil.rmtree(dst) if not os.path.islink(dst) else os.remove(dst)
+        remove_existing(dst)
         shutil.copytree(SRC, dst, ignore=shutil.ignore_patterns("__pycache__"))
     else:
         link(dst)
@@ -87,6 +96,11 @@ def main():
             subprocess.run([claude, "mcp", "add", "-s", "user", "blender-bridge", "--", sys.executable,
                             os.path.join(ROOT, "mcp_server.py")], check=True)
             print("MCP server registered as 'blender-bridge'")
+        # The skill teaches Claude Code how to use the tools well (same text the in-Blender chat gets).
+        dst = os.path.join(os.path.expanduser("~"), ".claude", "skills", "blender-bridge")
+        os.makedirs(dst, exist_ok=True)
+        shutil.copyfile(os.path.join(SRC, "skill", "SKILL.md"), os.path.join(dst, "SKILL.md"))
+        print(f"skill installed -> {dst}")
     print("done. Start Blender; the bridge autostarts on 127.0.0.1:9877 (View3D sidebar > Claude).")
 
 

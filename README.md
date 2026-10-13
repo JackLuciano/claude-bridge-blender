@@ -19,6 +19,10 @@ compact, high-level ops instead of throwaway Python scripts. Runs on your normal
 - **Screenshots and images**: attach a clean viewport capture, the whole Blender window, an image file, or
   **paste with Ctrl+V** (works even while typing in the chat field; Windows).
 - **Model picker**: Opus (default), Sonnet, Haiku, or your CLI default.
+- **Built-in skill** ([`claude_bridge/skill/SKILL.md`](claude_bridge/skill/SKILL.md)): workflow and real-world
+  modelling tips (sizes, grounding objects, lights, camera framing). It is added automatically to every in-Blender
+  chat, and installed for Claude Code as the `blender-bridge` skill (by `install.py`, or **Bridge ▸ Install Claude
+  Code skill**).
 - **Token-lean by design**:
   - The chat process runs with no built-in tools, skills, other MCP servers or user hooks. That is about
     **6.7k context tokens** per message versus about 62k for a default `claude -p`.
@@ -43,14 +47,25 @@ Python is still there as a last resort (`py` op).
 Requirements: Blender 4.2+ (tested on 5.2), Python 3.10+ for the installer, and
 [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` once in a terminal).
 
+### From a release (easiest)
+
+1. Download `claude_bridge-x.y.z.zip` from [Releases](https://github.com/JackLuciano/claude-bridge-blender/releases).
+2. In Blender, go to **Edit ▸ Preferences ▸ Get Extensions ▸ ⌄ ▸ Install from Disk…** and pick the zip.
+3. The in-Blender chat works right away.
+4. **For Claude Code** (optional): in **Sidebar ▸ Claude ▸ Bridge**, click **Copy Claude Code setup command** and run
+   it once in a terminal, then click **Install Claude Code skill**. Restart Claude Code.
+
+### From source
+
 ```bash
 git clone https://github.com/JackLuciano/claude-bridge-blender
 cd claude-bridge-blender
 python install.py
 ```
 
-`install.py` links `claude_bridge/` into Blender's user add-ons (use `--copy` to copy instead), enables it, and
-registers the MCP server with Claude Code as `blender-bridge` (skip that step with `--no-mcp`).
+`install.py` links `claude_bridge/` into Blender's user add-ons (use `--copy` to copy instead), enables it,
+registers the MCP server with Claude Code as `blender-bridge`, and installs the `blender-bridge` skill
+(skip the Claude Code steps with `--no-mcp`).
 
 Start Blender and open the **Claude** tab in the 3D view sidebar (press `N`). The bridge starts automatically.
 
@@ -133,6 +148,11 @@ The chat's Claude process can use only the two bridge tools: no shell, no file a
   not while editing the text field; use the 📋 button there. Clipboard reading uses `pngpaste`/AppleScript on
   macOS and `wl-paste`/`xclip` on Linux.
 - Port: `CLAUDE_BRIDGE_PORT` for the MCP server; `claude_bridge.PORT` in the addon (default `9877`).
+
+## Contributing
+
+Feel free to fork, modify and improve it. Issues and pull requests are very welcome, from small fixes to new
+ops. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, how to add an op, and the test commands.
 
 ## License
 
