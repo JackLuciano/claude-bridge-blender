@@ -294,6 +294,23 @@ def t_scene_cap():
     assert len(lines) == 5 and lines[-1].startswith("+") and "more" in lines[-1], out
 
 
+@test
+def t_world():
+    fresh()
+    for spec in ({"color": "#202830", "strength": 0.5}, {"hdri": "interior", "rot": 90}, {"sky": True, "sun": True},
+                 {"hdri": "studio", "bg": "#ffffff"}):
+        ok, out = run({"op": "world", **spec})
+        assert ok and out.startswith("world"), (spec, out)
+        nt = bpy.context.scene.world.node_tree
+        outn = next(n for n in nt.nodes if n.type == "OUTPUT_WORLD")
+        assert outn.inputs["Surface"].is_linked, spec
+    assert "Sky_Sun" in bpy.data.objects
+    env = [n for n in nt.nodes if n.type == "TEX_ENVIRONMENT"]
+    assert len(env) == 1 and env[0].image, "repeat calls must replace nodes"
+    ok, out = run({"op": "world", "hdri": "mars"})
+    assert not ok and "hdri must be one of" in out
+
+
 def main():
     failed = 0
     for fn in TESTS:
