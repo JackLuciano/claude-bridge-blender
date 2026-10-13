@@ -109,8 +109,13 @@ def token():
         return ""
 
 
+MODE = os.environ.get("CLAUDE_BRIDGE_MODE", "")  # set by the in-Blender chat: coach/plan are read-only
+
+
 def blender(req: dict) -> dict:
     req = {**req, "auth": token()}
+    if MODE:
+        req["mode"] = MODE
     try:
         with socket.create_connection((HOST, PORT), timeout=5) as s:
             s.settimeout(600)
