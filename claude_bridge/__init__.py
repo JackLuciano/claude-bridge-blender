@@ -44,6 +44,8 @@ def _handle_request(req: dict) -> dict:
     if "look" in req:
         return bridge_ops.look(req["look"] or {})
     batch = req.get("ops", [])
+    from . import doctor
+    doctor.recent_ops.append(",".join(str(bridge_ops._normalize(a).get("op")) for a in batch)[:120])
     results, ok = bridge_ops.run_batch(batch)
     if bridge_ops.batch_kind(batch) == "write":  # read-only calls must not wipe the user's redo
         try:
@@ -324,6 +326,9 @@ class CLAUDE_PT_panel(bpy.types.Panel):
         col.operator("claude.toggle_bridge", text="Stop" if _server else "Start")
         col.operator("claude.copy_mcp_command", icon="COPYDOWN")
         col.operator("claude.install_skill", icon="BOOKMARKS")
+        row = col.row(align=True)
+        row.operator("claude.doctor_check", icon="CHECKMARK")
+        row.operator("claude.copy_diagnostics", icon="URL")
 
 
 _classes = (ClaudeBridgePrefs, CLAUDE_OT_toggle, CLAUDE_OT_copy_mcp, CLAUDE_OT_install_skill, CLAUDE_PT_panel)
@@ -334,6 +339,9 @@ def _autostart():
     if p is None or p.autostart:
         start()
     chat.apply_prefs()
+    if not bpy.app.background:
+        from . import doctor
+        doctor.run_async()
     return None
 
 

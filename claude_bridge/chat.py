@@ -635,10 +635,15 @@ def _worker(cmd, message):
             proc.wait(timeout=30)
         except subprocess.TimeoutExpired:
             _kill_tree(proc)
+        err = "".join(tail).strip()
+        if err:
+            from . import doctor
+            doctor.last_stderr[0] = err
         if proc.returncode not in (0, None) and state["history"] and state["history"][-1][0] != "error":
-            err = "".join(tail).strip()
             if err:
                 _push("error", classify_error(err[-300:]))
+            from . import doctor
+            doctor.run_async()  # show what's wrong with the setup, with a fix button
     except Exception as e:
         _push("error", f"failed to run claude: {e}")
     finally:
@@ -1217,6 +1222,8 @@ class CLAUDE_PT_chat(bpy.types.Panel):
     def draw(self, context):
         wm = context.window_manager
         layout = self.layout
+        from . import doctor
+        doctor.draw(layout)
 
         row = layout.row(align=True)
         row.prop(wm, "claude_chat_list", text="")
@@ -1419,7 +1426,8 @@ _keymaps = []
 
 
 def register():
-    for c in classes:
+    from . import doctor
+    for c in classes + doctor.classes:
         bpy.utils.register_class(c)
     global _watcher
     if os.name == "nt" and not bpy.app.background:
@@ -1455,5 +1463,6 @@ def unregister():
     _keymaps.clear()
     for p in ("claude_chat_input", "claude_chat_model", "claude_chat_effort", "claude_chat_list"):
         delattr(bpy.types.WindowManager, p)
-    for c in reversed(classes):
+    from . import doctor
+    for c in reversed(classes + doctor.classes):
         bpy.utils.unregister_class(c)
