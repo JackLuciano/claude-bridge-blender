@@ -281,6 +281,19 @@ def t_dims_bake():
     assert round(mapping.inputs["Scale"].default_value[0], 3) == 3, out
 
 
+@test
+def t_scene_cap():
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "Rock"}, {"op": "dup", "obj": "Rock", "n": 20, "name": "Rock"},
+                  *[{"op": "add", "type": "ico", "name": f"P{i}"} for i in range(10)])
+    assert ok, out
+    ok, out = run({"op": "scene"})
+    assert ok and "Rock.001-.020 x20 [mesh]" in out and "Rock.005" not in out, out
+    ok, out = run({"op": "scene", "limit": 3})
+    lines = out.splitlines()
+    assert len(lines) == 5 and lines[-1].startswith("+") and "more" in lines[-1], out
+
+
 def main():
     failed = 0
     for fn in TESTS:

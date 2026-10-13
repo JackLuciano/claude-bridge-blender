@@ -202,6 +202,55 @@ def t_hardening():
 
 
 @test
+def t_context_line():
+    from claude_bridge import ops
+    ops.op_new({})
+    ops.run_batch([{"op": "add", "type": "cube", "name": "Chair"}, {"op": "select", "obj": "Chair"}])
+    bpy.context.scene.cursor.location = (1, 2, 0)
+    line = chat.context_line()
+    assert line.startswith("[ctx mode object") and "active Chair" in line and "sel Chair" in line, line
+    assert "cursor (1,2,0)" in line, line
+    msg = chat.build_message("make this red", [], line)
+    assert msg["message"]["content"][-1]["text"] == line + "\nmake this red"
+    # Prefill must not send
+    claude_bridge.register()
+    try:
+        sent = []
+        orig = chat.send
+        chat.send = lambda *a, **k: sent.append(a)
+        try:
+            chat.prefill(bpy.context.window_manager, "hello")
+            assert not sent and bpy.context.window_manager.claude_chat_input == "hello"
+        finally:
+            chat.send = orig
+            chat.prefill(bpy.context.window_manager, "")
+    finally:
+        claude_bridge.unregister()
+
+
+@test
+def t_preferences():
+    import addon_utils
+    mod = addon_utils.enable("claude_bridge", default_set=True)  # factory startup: prefs are never saved
+    try:
+        assert mod is not None
+        p = claude_bridge.prefs()
+        assert p is not None and p.port == 9877 and p.autostart and p.default_model == "opus"
+        p.custom_instructions = "Use imperial units."
+        assert chat.custom_instructions() == "Use imperial units."
+        p.port = 9900
+        assert "-e CLAUDE_BRIDGE_PORT=9900" in claude_bridge.mcp_add_command()
+        p.default_model, p.default_effort = "sonnet", "low"
+        chat.apply_prefs()
+        wm = bpy.context.window_manager
+        assert wm.claude_chat_model == "sonnet" and wm.claude_chat_effort == "low"
+        wm.claude_chat_model = "haiku"
+        assert p.default_model == "haiku"
+    finally:
+        addon_utils.disable("claude_bridge", default_set=True)
+
+
+@test
 def t_missing_cli():
     chat.new_chat()
     orig = chat.find_claude

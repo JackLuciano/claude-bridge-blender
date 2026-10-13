@@ -171,7 +171,8 @@ def start():
     global _server, PORT
     if _server:
         return
-    base = getattr(start, "base", PORT)
+    p = prefs()
+    base = getattr(start, "base", p.port if p else PORT)
     start.base = base
     for port in range(base, base + PORT_RANGE):
         try:
@@ -201,6 +202,64 @@ def stop():
         bpy.app.timers.unregister(_pump)
 
 
+class ClaudeBridgePrefs(bpy.types.AddonPreferences):
+    bl_idname = __package__
+
+    port: bpy.props.IntProperty(name="Port", default=9877, min=1024, max=65000,
+                                description="First port the bridge tries (a second Blender takes the next free one)")
+    autostart: bpy.props.BoolProperty(name="Start bridge with Blender", default=True)
+    default_model: bpy.props.EnumProperty(name="Default model", items=chat.MODEL_ITEMS_STATIC, default="opus")
+    default_effort: bpy.props.EnumProperty(name="Default effort", items=chat.EFFORT_ITEMS, default="default")
+    send_context: bpy.props.BoolProperty(
+        name="Send scene context", default=True,
+        description="Start every message with a short line about the selection, mode and 3D cursor (~30 tokens)")
+    claude_path: bpy.props.StringProperty(name="claude CLI", subtype="FILE_PATH",
+                                          description="Path to the claude executable; empty = find it automatically")
+    chats_dir: bpy.props.StringProperty(name="Chats folder", subtype="DIR_PATH",
+                                        description="Where chats are saved; empty = Blender's config folder")
+    inbox_dir: bpy.props.StringProperty(name="Inbox folder", subtype="DIR_PATH",
+                                        description="Model files dropped here are imported and fitted by the Inbox button; "
+                                                    "empty = <chats folder>/inbox")
+    custom_instructions: bpy.props.StringProperty(
+        name="Standing instructions",
+        description="Added to every chat's system prompt, e.g. 'Use imperial units' or 'Low-poly style'")
+    safe_mode: bpy.props.BoolProperty(
+        name="Safe mode", default=False,
+        description="Hold risky ops (py, new, open, deleting objects Claude didn't make) until you approve them, "
+                    "and keep file paths inside the .blend folder, temp and the Inbox")
+    teach_mode: bpy.props.BoolProperty(
+        name="Show how-to hints", default=False,
+        description="Under each tool call, show the menu path or shortcut to do it by hand")
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "port")
+        col.prop(self, "autostart")
+        row = col.row()
+        row.prop(self, "default_model")
+        row.prop(self, "default_effort")
+        col.prop(self, "send_context")
+        col.prop(self, "safe_mode")
+        col.prop(self, "teach_mode")
+        col.prop(self, "claude_path")
+        col.prop(self, "chats_dir")
+        col.prop(self, "inbox_dir")
+        col.prop(self, "custom_instructions")
+        n = len(self.custom_instructions) // 4
+        if n:
+            col.label(text=f"≈{n} tokens added to every message" + (" — keep it short" if n > 300 else ""),
+                      icon="ERROR" if n > 300 else "INFO")
+
+
+def prefs():
+    """The add-on preferences, or None when the module isn't enabled as an add-on (tests, scripts)."""
+    try:
+        a = bpy.context.preferences.addons.get(__package__)
+    except AttributeError:
+        return None
+    return a.preferences if a else None
+
+
 class CLAUDE_OT_toggle(bpy.types.Operator):
     bl_idname = "claude.toggle_bridge"
     bl_label = "Toggle Claude Bridge"
@@ -215,7 +274,9 @@ def mcp_add_command():
     import os
     import sys
     server = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
-    return f'claude mcp add -s user blender-bridge -- "{sys.executable}" "{server}"'
+    p = prefs()
+    env = f" -e CLAUDE_BRIDGE_PORT={p.port}" if p and p.port != 9877 else ""
+    return f'claude mcp add -s user{env} blender-bridge -- "{sys.executable}" "{server}"'
 
 
 class CLAUDE_OT_copy_mcp(bpy.types.Operator):
@@ -262,19 +323,27 @@ class CLAUDE_PT_panel(bpy.types.Panel):
         col.operator("claude.install_skill", icon="BOOKMARKS")
 
 
-_classes = (CLAUDE_OT_toggle, CLAUDE_OT_copy_mcp, CLAUDE_OT_install_skill, CLAUDE_PT_panel)
+_classes = (ClaudeBridgePrefs, CLAUDE_OT_toggle, CLAUDE_OT_copy_mcp, CLAUDE_OT_install_skill, CLAUDE_PT_panel)
+
+
+def _autostart():
+    p = prefs()
+    if p is None or p.autostart:
+        start()
+    chat.apply_prefs()
+    return None
 
 
 def register():
-    chat.register()
     for c in _classes:
         bpy.utils.register_class(c)
-    # Autostart; deferred so it also works when enabled at startup.
-    bpy.app.timers.register(lambda: (start(), None)[1], first_interval=0.5)
+    chat.register()
+    # Deferred so it also works when enabled at startup (preferences aren't readable during register).
+    bpy.app.timers.register(_autostart, first_interval=0.5)
 
 
 def unregister():
     stop()
+    chat.unregister()
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)
-    chat.unregister()
