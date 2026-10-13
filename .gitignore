@@ -4,3 +4,4 @@ tests/_out/
 .remember/
 *.blend1
 dist/
+tools/_listing/raw/

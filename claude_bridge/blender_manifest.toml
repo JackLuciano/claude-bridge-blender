@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "claude_bridge"
-version = "0.1.0"
+version = "0.1.1"
 name = "Claude Bridge"
 tagline = "Compact op-based control channel for Claude Code via MCP"
 maintainer = "JackLuciano"

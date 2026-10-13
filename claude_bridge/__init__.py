@@ -9,7 +9,7 @@ short text line per op. Every batch is a single undo step.
 bl_info = {
     "name": "Claude Bridge",
     "author": "JackLuciano",
-    "version": (0, 1, 0),
+    "version": (0, 1, 1),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Claude",
     "description": "Compact op-based control channel for Claude Code (MCP)",
@@ -85,13 +85,25 @@ def _client_thread(conn: socket.socket):
                 conn.sendall((json.dumps(resp) + "\n").encode())
 
 
+PORT_RANGE = 10  # a second Blender falls back to 9878, 9879, ...
+
+
 class _Server(threading.Thread):
-    def __init__(self):
+    def __init__(self, port):
         super().__init__(daemon=True)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((HOST, PORT))
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            # Windows: SO_REUSEADDR would let two Blenders bind the same port and split traffic.
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            self.sock.bind((HOST, port))
+        except OSError:
+            self.sock.close()
+            raise
         self.sock.listen(4)
+        self.port = port
         self.running = True
 
     def run(self):
@@ -111,10 +123,22 @@ class _Server(threading.Thread):
 
 
 def start():
-    global _server
+    """Bind the first free port from PORT upward. The in-Blender chat follows the bound port;
+    Claude Code (registered on the default port) talks to the first Blender."""
+    global _server, PORT
     if _server:
         return
-    _server = _Server()
+    base = getattr(start, "base", PORT)
+    start.base = base
+    for port in range(base, base + PORT_RANGE):
+        try:
+            _server = _Server(port)
+            break
+        except OSError:
+            continue
+    else:
+        raise OSError(f"no free port in {base}-{base + PORT_RANGE - 1}")
+    PORT = _server.port
     _server.start()
     if not bpy.app.timers.is_registered(_pump):
         bpy.app.timers.register(_pump, persistent=True)
@@ -182,6 +206,9 @@ class CLAUDE_PT_panel(bpy.types.Panel):
     def draw(self, context):
         col = self.layout.column()
         col.label(text=f"{'Running' if _server else 'Stopped'} on {HOST}:{PORT}")
+        if _server and PORT != getattr(start, "base", PORT):
+            col.label(text="Another Blender has the default port;", icon="INFO")
+            col.label(text="Claude Code talks to that one.", icon="BLANK1")
         col.operator("claude.toggle_bridge", text="Stop" if _server else "Start")
         col.operator("claude.copy_mcp_command", icon="COPYDOWN")
         col.operator("claude.install_skill", icon="BOOKMARKS")

@@ -87,7 +87,32 @@ def client():
         state["done"] = True
 
 
+def port_fallback():
+    """A second server on a taken port must not share it, it must move to the next one."""
+    import socket
+    blocker = socket.socket()
+    if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    blocker.bind(("127.0.0.1", PORT))
+    blocker.listen(1)
+    try:
+        claude_bridge.start()
+        moved = claude_bridge.PORT == PORT + 1
+        claude_bridge.stop()
+    finally:
+        blocker.close()
+    claude_bridge.PORT = PORT
+    claude_bridge.start.base = PORT
+    print(("PASS" if moved else "FAIL") + f" port fallback (got {claude_bridge.PORT if not moved else PORT + 1})")
+    if moved:
+        state["passed"] += 1
+    else:
+        state["errors"].append("port fallback")
+
+
 def main():
+    claude_bridge.start.base = PORT
+    port_fallback()
     claude_bridge.start()
     threading.Thread(target=client, daemon=True).start()
     deadline = time.time() + 120
