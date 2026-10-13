@@ -56,6 +56,9 @@ jobs:
 
       - name: Run tests
         shell: bash
+        env:
+          # Windows runners have no OpenGL: Blender's renderer crashes there, so render steps are skipped.
+          CLAUDE_BRIDGE_NO_GPU: ${{ runner.os == 'Windows' && '1' || '' }}
         run: |
           case "$RUNNER_OS" in
             Linux) B=blender/blender ;;

@@ -165,7 +165,9 @@ def chat_with_fake_cli(P):
     from claude_bridge import chat
     out = tempfile.mkdtemp()
     fake_dir = os.path.join(ROOT, "tests", "fake_claude")
-    os.environ.update(FAKE_CLAUDE_OUT=out, FAKE_CLAUDE_PY=chat.blender_python(), ANTHROPIC_API_KEY="sk-should-not-leak")
+    # Any Python runs the fake CLI; prefer the test runner's (Blender's own path can be unusable on macOS CI).
+    py = os.environ.get("TEST_PYTHON") or chat.blender_python()
+    os.environ.update(FAKE_CLAUDE_OUT=out, FAKE_CLAUDE_PY=py, ANTHROPIC_API_KEY="sk-should-not-leak")
     os.environ.setdefault("CLAUDE_BRIDGE_CHATS", tempfile.mkdtemp())
     P.safe_mode = P.persistent_cli = False
     P.send_context, P.custom_instructions, P.claude_path, P.chats_dir = True, "", "", ""
