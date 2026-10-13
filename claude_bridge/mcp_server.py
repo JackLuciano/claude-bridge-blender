@@ -12,6 +12,19 @@ import socket
 import sys
 
 HOST, PORT = "127.0.0.1", int(os.environ.get("CLAUDE_BRIDGE_PORT", "9877"))
+__version__ = "0.2.0"  # tests/test_integration.py checks this matches the manifest, bl_info, pyproject and server.json
+
+
+def version():
+    """The add-on's version when running from it (manifest next to this file), else the package's."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "blender_manifest.toml"), encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("version"):
+                    return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return __version__
 
 BL_DESC = """Control the live Blender. ops = list of {"op":..., ...}; runs in order as ONE undo step, stops at first error.
 Refs: obj = name | [names] | "sel" | "active". Angles deg. Colors "#rrggbb" or [r,g,b].
@@ -42,6 +55,11 @@ api{id|path|node|search}  (look up operator args, writable props, node sockets i
 world{color,strength | hdri:studio|interior|forest|city|courtyard|night|sunrise|sunset|path,rot | sky:true,sun_elev,sun_rot,sun | bg}
 render{path,res[w,h],pct,samples,engine,preview,look,max}  (look:true returns the image; settings restored) import{path} export{path} save{path} open{path} new{keep} undo{n} redo{n}
 py{code}  (last resort; set `out` to return)"""
+
+INSTRUCTIONS = ("Controls the user's live Blender through the Claude Bridge add-on. Use `bl` for scene changes "
+                "(batch many ops per call: one undo step) and `look` to see the result (one views:[...] grid instead of "
+                "many looks). Run `check` before the final look. Prefer ops and `api` lookups over the `py` op. "
+                "Sizes in meters, angles in degrees.")
 
 # Mirrors ops.OPS (this process has no bpy); tests/test_integration.py checks they match.
 OP_NAMES = ["scene", "info", "get", "prop", "add", "set", "move", "del", "dup", "select", "join", "mat", "tex", "mod",
@@ -145,7 +163,8 @@ def main():
             result = {
                 "protocolVersion": msg.get("params", {}).get("protocolVersion", "2025-06-18"),
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "blender-bridge", "version": "0.1.2"},
+                "serverInfo": {"name": "blender-bridge", "version": version()},
+                "instructions": INSTRUCTIONS,
             }
         elif method == "tools/list":
             result = {"tools": TOOLS}

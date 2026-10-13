@@ -1,0 +1,13 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "blender-bridge",
+  "version": "0.2.0",
+  "description": "Drive a live Blender from Claude Code: the blender-bridge MCP server (needs the Claude Bridge add-on running in Blender) plus the blender-bridge modelling skill.",
+  "author": {
+    "name": "JackLuciano"
+  },
+  "homepage": "https://github.com/JackLuciano/claude-bridge-blender",
+  "repository": "https://github.com/JackLuciano/claude-bridge-blender",
+  "license": "GPL-3.0-or-later",
+  "keywords": ["blender", "3d", "mcp"]
+}

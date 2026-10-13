@@ -52,6 +52,20 @@ def client():
         p.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
         p.stdin.flush()
 
+        # One version everywhere (the 0.1.2 zip shipped with serverInfo 0.1.0)
+        import re
+        from claude_bridge import mcp_server as ms
+        man = re.search(r'^version = "(.+)"', open(os.path.join(ROOT, "claude_bridge", "blender_manifest.toml")).read(), re.M)[1]
+        pyp = re.search(r'^version = "(.+)"', open(os.path.join(ROOT, "pyproject.toml")).read(), re.M)[1]
+        sj = json.load(open(os.path.join(ROOT, "server.json")))
+        plug = json.load(open(os.path.join(ROOT, "plugin", ".claude-plugin", "plugin.json")))["version"]
+        versions = {man, pyp, sj["version"], sj["packages"][0]["version"], plug, ms.__version__,
+                    ".".join(map(str, claude_bridge.bl_info["version"])), r["result"]["serverInfo"]["version"]}
+        check("one version everywhere", len(versions) == 1, versions)
+        same = open(os.path.join(ROOT, "plugin", "skills", "blender-bridge", "SKILL.md"), "rb").read() == \
+            open(os.path.join(ROOT, "claude_bridge", "skill", "SKILL.md"), "rb").read()
+        check("plugin skill is a copy of the add-on skill", same)
+
         r = rpc("tools/list")
         names = [t["name"] for t in r["result"]["tools"]]
         check("tools/list", names == ["bl", "look"], names)
