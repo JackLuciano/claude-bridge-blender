@@ -1,0 +1,169 @@
+"""Claude Bridge: compact, token-cheap remote control of Blender for Claude Code.
+
+A localhost TCP server receives JSON lines of the form
+    {"ops": [{"op": "add", "type": "cube", "name": "Box"}, ...]}
+queues them, executes them on Blender's main thread and answers with one
+short text line per op. Every batch is a single undo step.
+"""
+
+bl_info = {
+    "name": "Claude Bridge",
+    "author": "JackLuciano",
+    "version": (0, 1, 0),
+    "blender": (4, 2, 0),
+    "location": "View3D > Sidebar > Claude",
+    "description": "Compact op-based control channel for Claude Code (MCP)",
+    "category": "Interface",
+}
+
+import json
+import queue
+import socket
+import threading
+
+import bpy
+
+from . import chat
+from . import ops as bridge_ops
+
+HOST = "127.0.0.1"
+PORT = 9877
+
+_server = None
+_jobs: "queue.Queue[tuple[dict, queue.Queue]]" = queue.Queue()
+
+
+def _handle_request(req: dict) -> dict:
+    """Runs on the main thread. Executes a batch as one undo step."""
+    if "look" in req:
+        return bridge_ops.look(req["look"] or {})
+    results, ok = bridge_ops.run_batch(req.get("ops", []))
+    try:
+        bpy.ops.ed.undo_push(message="Claude batch")
+    except Exception:
+        pass
+    return {"ok": ok, "text": "\n".join(results)}
+
+
+def _pump():
+    """Timer callback: drain queued requests on the main thread."""
+    while True:
+        try:
+            req, reply = _jobs.get_nowait()
+        except queue.Empty:
+            break
+        try:
+            reply.put(_handle_request(req))
+        except Exception as e:  # never let the timer die
+            reply.put({"ok": False, "text": f"ERR internal: {e}"})
+    return 0.02
+
+
+def _client_thread(conn: socket.socket):
+    buf = b""
+    with conn:
+        while True:
+            chunk = conn.recv(65536)
+            if not chunk:
+                return
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                if not line.strip():
+                    continue
+                try:
+                    req = json.loads(line)
+                except json.JSONDecodeError as e:
+                    resp = {"ok": False, "text": f"ERR bad json: {e}"}
+                else:
+                    reply: queue.Queue = queue.Queue()
+                    _jobs.put((req, reply))
+                    try:
+                        resp = reply.get(timeout=600)
+                    except queue.Empty:
+                        resp = {"ok": False, "text": "ERR timeout"}
+                conn.sendall((json.dumps(resp) + "\n").encode())
+
+
+class _Server(threading.Thread):
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind((HOST, PORT))
+        self.sock.listen(4)
+        self.running = True
+
+    def run(self):
+        while self.running:
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=_client_thread, args=(conn,), daemon=True).start()
+
+    def stop(self):
+        self.running = False
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+def start():
+    global _server
+    if _server:
+        return
+    _server = _Server()
+    _server.start()
+    if not bpy.app.timers.is_registered(_pump):
+        bpy.app.timers.register(_pump, persistent=True)
+
+
+def stop():
+    global _server
+    if _server:
+        _server.stop()
+        _server = None
+    if bpy.app.timers.is_registered(_pump):
+        bpy.app.timers.unregister(_pump)
+
+
+class CLAUDE_OT_toggle(bpy.types.Operator):
+    bl_idname = "claude.toggle_bridge"
+    bl_label = "Toggle Claude Bridge"
+
+    def execute(self, context):
+        stop() if _server else start()
+        return {"FINISHED"}
+
+
+class CLAUDE_PT_panel(bpy.types.Panel):
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Claude"
+    bl_label = "Bridge"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.label(text=f"{'Running' if _server else 'Stopped'} on {HOST}:{PORT}")
+        col.operator("claude.toggle_bridge", text="Stop" if _server else "Start")
+
+
+_classes = (CLAUDE_OT_toggle, CLAUDE_PT_panel)
+
+
+def register():
+    chat.register()
+    for c in _classes:
+        bpy.utils.register_class(c)
+    # Autostart; deferred so it also works when enabled at startup.
+    bpy.app.timers.register(lambda: (start(), None)[1], first_interval=0.5)
+
+
+def unregister():
+    stop()
+    for c in reversed(_classes):
+        bpy.utils.unregister_class(c)
+    chat.unregister()

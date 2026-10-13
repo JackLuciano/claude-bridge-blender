@@ -1,0 +1,16 @@
+schema_version = "1.0.0"
+
+id = "claude_bridge"
+version = "0.1.0"
+name = "Claude Bridge"
+tagline = "Compact op-based control channel for Claude Code via MCP"
+maintainer = "JackLuciano"
+website = "https://github.com/JackLuciano/claude-bridge-blender"
+type = "add-on"
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+tags = ["Interface", "Development"]
+
+[permissions]
+network = "Listens on 127.0.0.1:9877 for local MCP bridge connections"
+files = "Writes viewport captures and renders to the temp directory"

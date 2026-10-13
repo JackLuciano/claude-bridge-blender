@@ -1,0 +1,211 @@
+"""Op-level tests. Run inside Blender:
+    blender -b --factory-startup --python tests/test_ops.py
+Exits non-zero on failure.
+"""
+
+import os
+import sys
+import tempfile
+import traceback
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+import bpy  # noqa: E402
+
+from claude_bridge import ops  # noqa: E402
+
+
+def run(*batch):
+    res, ok = ops.run_batch(list(batch))
+    return ok, "\n".join(res)
+
+
+def fresh():
+    ops.op_new({})
+
+
+TESTS = []
+
+
+def test(fn):
+    TESTS.append(fn)
+    return fn
+
+
+@test
+def t_add_and_scene():
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "Box", "loc": [1, 2, 3], "size": 2})
+    assert ok, out
+    o = bpy.data.objects["Box"]
+    assert tuple(round(x, 3) for x in o.location) == (1, 2, 3)
+    assert round(o.dimensions.x, 3) == 2
+    ok, out = run({"op": "scene"})
+    assert "Box[mesh]" in out, out
+
+
+@test
+def t_all_primitives():
+    fresh()
+    types = [k for k in ops._PRIMS] + ["point", "sun", "spot", "area"]
+    ok, out = run(*[{"op": "add", "type": t, "name": f"P_{t}"} for t in types])
+    assert ok, out
+    for t in types:
+        assert f"P_{t}" in bpy.data.objects, t
+
+
+@test
+def t_set_move_rot():
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "A"},
+                  {"op": "set", "obj": "A", "rot": [0, 0, 90], "scale": 2},
+                  {"op": "move", "obj": "A", "by": [1, 0, 0], "rot": [0, 0, 10], "scale": 0.5})
+    assert ok, out
+    o = bpy.data.objects["A"]
+    assert round(o.location.x, 3) == 1
+    assert abs(o.rotation_euler.z - 1.745329) < 1e-4
+    assert round(o.scale.x, 3) == 1
+
+
+@test
+def t_material():
+    fresh()
+    ok, out = run({"op": "add", "type": "sphere", "name": "S", "mat": {"name": "Red", "color": "#ff0000", "rough": 0.2, "metal": 1}})
+    assert ok, out
+    m = bpy.data.materials["Red"]
+    bsdf = next(n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    assert abs(bsdf.inputs["Roughness"].default_value - 0.2) < 1e-6
+    assert bsdf.inputs["Base Color"].default_value[0] > 0.99
+    assert bpy.data.objects["S"].data.materials[0] == m
+    # Reuse by name
+    ok, out = run({"op": "add", "type": "cube", "name": "C"}, {"op": "mat", "obj": "C", "name": "Red"})
+    assert ok and bpy.data.objects["C"].data.materials[0] == m, out
+    # Color shorthand on add creates a material
+    ok, out = run({"op": "add", "type": "cube", "name": "Q", "color": "#00ff00"})
+    assert ok and "mat:Q_mat" in out, out
+    # "mat": "#hex" is a color, not a material name (regression: cube came out white)
+    for i, spec in enumerate(["#ff0000", [1, 0, 0], {"name": "#ff0000"}]):
+        ok, out = run({"op": "add", "type": "cube", "name": f"R{i}", "mat": spec})
+        m = bpy.data.objects[f"R{i}"].active_material
+        assert ok and m.diffuse_color[0] > 0.99 and m.diffuse_color[1] < 0.01 and not m.name.startswith("#"), (spec, out)
+
+
+@test
+def t_modifiers_and_apply():
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "M"},
+                  {"op": "mod", "obj": "M", "type": "bevel", "props": {"width": 0.1, "segments": 3}},
+                  {"op": "mod", "obj": "M", "type": "array", "props": {"count": 3}})
+    assert ok, out
+    o = bpy.data.objects["M"]
+    assert [m.type for m in o.modifiers] == ["BEVEL", "ARRAY"]
+    assert o.modifiers[1].count == 3
+    ok, out = run({"op": "apply", "obj": "M", "mod": "all"})
+    assert ok, out
+    assert len(o.modifiers) == 0 and len(o.data.vertices) > 8
+
+
+@test
+def t_bool_with_object_ref():
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "Base", "size": 2},
+                  {"op": "add", "type": "cylinder", "name": "Hole", "size": 0.5, "scale": [1, 1, 3]},
+                  {"op": "mod", "obj": "Base", "type": "bool", "props": {"object": "Hole", "operation": "DIFFERENCE"}})
+    assert ok, out
+    assert bpy.data.objects["Base"].modifiers[0].object.name == "Hole"
+
+
+@test
+def t_dup_select_join_del():
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "D"},
+                  {"op": "dup", "obj": "D", "n": 3, "by": [2, 0, 0]})
+    assert ok, out
+    assert len([o for o in bpy.data.objects if o.name.startswith("D")]) == 4
+    ok, out = run({"op": "select", "obj": [o.name for o in bpy.data.objects if o.name.startswith("D")]},
+                  {"op": "join", "obj": "sel"})
+    assert ok, out
+    assert len(bpy.context.scene.objects) == 1
+    ok, out = run({"op": "del", "obj": "active"})
+    assert ok and len(bpy.context.scene.objects) == 0, out
+
+
+@test
+def t_props_get_and_prop():
+    fresh()
+    ok, out = run({"op": "prop", "path": "scene.render.fps", "value": 30}, {"op": "get", "path": "scene.render.fps"})
+    assert ok and "scene.render.fps=30" in out, out
+    ok, out = run({"op": "add", "type": "point", "name": "L", "energy": 500, "color": "#ffaa00"},
+                  {"op": "get", "path": "L.data.energy"})
+    assert ok and "=500" in out, out
+
+
+@test
+def t_camera_and_aim():
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "T"},
+                  {"op": "cam", "name": "Cam", "loc": [5, -5, 5], "at": "T", "lens": 35})
+    assert ok, out
+    cam = bpy.data.objects["Cam"]
+    assert bpy.context.scene.camera == cam and cam.data.lens == 35
+    fwd = cam.matrix_world.to_quaternion() @ __import__("mathutils").Vector((0, 0, -1))
+    to_t = (-cam.location).normalized()
+    assert fwd.dot(to_t) > 0.999
+
+
+@test
+def t_bop_and_py():
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "B"},
+                  {"op": "bop", "id": "object.shade_smooth", "obj": "B"},
+                  {"op": "py", "code": "out = len(bpy.data.objects)"})
+    assert ok and "py 1" in out, out
+
+
+@test
+def t_error_stops_batch():
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "X"}, {"op": "set", "obj": "Nope", "loc": [0, 0, 0]},
+                  {"op": "add", "type": "cube", "name": "Y"})
+    assert not ok and "no object 'Nope'" in out
+    assert "X" in bpy.data.objects and "Y" not in bpy.data.objects
+    ok, out = run({"add": {"type": "cube", "name": "Short"}})
+    assert ok and "Short" in bpy.data.objects, out
+    ok, out = run({"op": "bogus"})
+    assert not ok and "unknown op" in out
+
+
+@test
+def t_export_import_render():
+    fresh()
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "x.obj")
+    ok, out = run({"op": "add", "type": "monkey", "name": "Suz"}, {"op": "export", "path": p})
+    assert ok and os.path.exists(p), out
+    fresh()
+    ok, out = run({"op": "import", "path": p})
+    assert ok and "imported 1" in out, out
+    png = os.path.join(d, "r.png")
+    ok, out = run({"op": "cam", "loc": [3, -3, 2], "at": [0, 0, 0]},
+                  {"op": "add", "type": "sun"},
+                  {"op": "render", "path": png, "res": [64, 48], "engine": "BLENDER_WORKBENCH"})
+    assert ok and os.path.exists(png), out
+
+
+def main():
+    failed = 0
+    for fn in TESTS:
+        try:
+            fn()
+            print(f"PASS {fn.__name__}")
+        except Exception:
+            failed += 1
+            print(f"FAIL {fn.__name__}")
+            traceback.print_exc()
+    print(f"\n{len(TESTS) - failed}/{len(TESTS)} passed")
+    sys.stdout.flush()
+    os._exit(1 if failed else 0)
+
+
+main()
