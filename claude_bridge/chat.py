@@ -134,7 +134,7 @@ def delete(cid):
 def stop():
     p = state["proc"]
     if p:
-        p.kill()
+        _kill_tree(p)
         _push("info", "stopped")
 
 
@@ -183,19 +183,44 @@ def capture_window(context):
     raw = os.path.join(tempfile.gettempdir(), "claude_window_raw.png")
     bpy.ops.screen.screenshot(filepath=raw)
     dst = os.path.join(_attach_dir(), f"window-{uuid.uuid4().hex[:8]}.jpg")
-    img = bpy.data.images.load(raw, check_existing=False)
+    _to_jpeg(raw, dst)
+    attach(dst)
+    return dst
+
+
+MAX_IMAGE = 1568  # longest side Claude uses at full detail; bigger images only cost more tokens
+
+
+def _to_jpeg(src, dst, size=MAX_IMAGE):
+    """Downscale src to at most `size` px on the longest side and save it as a JPEG at dst (main thread)."""
+    img = bpy.data.images.load(src, check_existing=False)
     try:
         w, h = img.size
-        k = min(1.0, 1568 / max(w, h))
+        k = min(1.0, size / max(w, h, 1))
         if k < 1.0:
-            img.scale(int(w * k), int(h * k))
+            img.scale(max(1, round(w * k)), max(1, round(h * k)))
         img.filepath_raw = dst
         img.file_format = "JPEG"
         img.save()
     finally:
         bpy.data.images.remove(img)
-    attach(dst)
     return dst
+
+
+def _shrink_attachments(paths):
+    """Attachments larger than MAX_IMAGE (pasted 4K screenshots, photos) are downscaled before sending."""
+    out = []
+    for p in paths:
+        try:
+            img = bpy.data.images.load(p, check_existing=False)
+            big = max(img.size) > MAX_IMAGE
+            bpy.data.images.remove(img)
+            if big:
+                p = _to_jpeg(p, os.path.join(_attach_dir(), f"small-{uuid.uuid4().hex[:8]}.jpg"))
+        except Exception:
+            pass  # unreadable by Blender: send as is
+        out.append(p)
+    return out
 
 
 def grab_clipboard_image(dst):
@@ -333,7 +358,8 @@ def _mcp_config():
     cfg = {"mcpServers": {SERVER: {"command": sys.executable,
                                    "args": [os.path.join(ADDON_DIR, "mcp_server.py")],
                                    "env": {"CLAUDE_BRIDGE_PORT": str(PORT)}}}}
-    path = os.path.join(tempfile.gettempdir(), "claude_bridge_mcp.json")
+    # One file per port: two Blenders must not overwrite each other's config.
+    path = os.path.join(tempfile.gettempdir(), f"claude_bridge_mcp_{PORT}.json")
     with open(path, "w") as f:
         json.dump(cfg, f)
     return path
@@ -352,6 +378,24 @@ def build_cmd(claude, session=None, model="opus"):
     if model and model != "default":
         cmd += ["--model", model]
     return cmd
+
+
+_ERRORS = (  # (substrings, friendly message); first match wins
+    (("not logged in", "please run /login", "invalid api key", "oauth", "authentication"),
+     "Claude Code is logged out. Run `claude` in a terminal once to log in."),
+    (("usage limit", "rate limit", "limit reached", "resets"), "Usage limit reached: {raw}"),
+    (("unknown option", "unrecognized", "error: option"), "Your Claude Code CLI is too old. Run `claude update`."),
+    (("overloaded", "529"), "Claude is overloaded right now. Try again in a minute."),
+    (("not reachable", "connection refused"), "The bridge isn't running. Start it in Claude ▸ Bridge."),
+)
+
+
+def classify_error(text):
+    low = text.lower()
+    for keys, msg in _ERRORS:
+        if any(k in low for k in keys):
+            return msg.format(raw=text.strip()[:200])
+    return text
 
 
 def _tool_summary(block):
@@ -393,20 +437,52 @@ def handle_event(ev):
         state["session"] = ev.get("session_id", state["session"])
         state["cost"] += ev.get("total_cost_usd") or 0
         if ev.get("is_error"):
-            _push("error", str(ev.get("result", "error"))[:300])
+            _push("error", classify_error(str(ev.get("result", "error"))[:300]))
         else:
             save()  # persist the session id for --resume
 
 
+# Env vars that would make the CLI bill an API key or a cloud account instead of the user's subscription.
+_NO_SUBSCRIPTION_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+                        "CLAUDE_CODE_USE_FOUNDRY")
+
+
+def child_env(base=None):
+    env = dict(os.environ if base is None else base)
+    for k in _NO_SUBSCRIPTION_ENV:
+        env.pop(k, None)
+    env["ENABLE_TOOL_SEARCH"] = "false"  # load the two bridge tools up front, not via a ToolSearch round trip
+    return env
+
+
+def _kill_tree(proc):
+    """The CLI starts the MCP server as a child: stop both, not just the CLI."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
+                           creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+        else:
+            import signal
+            os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
 def _worker(cmd, message):
+    import collections
     try:
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE,
                                 text=True, encoding="utf-8", errors="replace", creationflags=flags,
-                                cwd=chats_dir(),
-                                # Load the two bridge tools up front instead of via a ToolSearch round trip.
-                                env=dict(os.environ, ENABLE_TOOL_SEARCH="false"))
+                                start_new_session=os.name != "nt", cwd=chats_dir(), env=child_env())
         state["proc"] = proc
+        # Drain stderr continuously: a full pipe would block the CLI and hang the turn.
+        tail = collections.deque(maxlen=40)
+        threading.Thread(target=lambda: tail.extend(proc.stderr), daemon=True).start()
         proc.stdin.write(json.dumps(message) + "\n")
         proc.stdin.close()
         for line in proc.stdout:
@@ -420,11 +496,14 @@ def _worker(cmd, message):
                 continue  # one malformed event must not end the chat
             if ev.get("type") == "result":
                 break
-        proc.wait(timeout=30)
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc)
         if proc.returncode not in (0, None) and state["history"] and state["history"][-1][0] != "error":
-            err = proc.stderr.read().strip()
+            err = "".join(tail).strip()
             if err:
-                _push("error", err[-300:])
+                _push("error", classify_error(err[-300:]))
     except Exception as e:
         _push("error", f"failed to run claude: {e}")
     finally:
@@ -439,7 +518,7 @@ def send(prompt, model="opus"):
         return
     from . import start
     start()  # the CLI's tool calls need the bridge running
-    images = list(state["attachments"])
+    images = _shrink_attachments(list(state["attachments"]))
     state["attachments"] = []
     _push("user", prompt + (f"\n[{len(images)} image{'s' if len(images) > 1 else ''} attached]" if images else ""))
     state["busy"] = True

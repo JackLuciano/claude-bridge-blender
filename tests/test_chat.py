@@ -178,6 +178,25 @@ def t_attach_limit():
 
 
 @test
+def t_hardening():
+    env = chat.child_env({"PATH": "x", "ANTHROPIC_API_KEY": "sk", "CLAUDE_CODE_USE_BEDROCK": "1"})
+    assert "ANTHROPIC_API_KEY" not in env and "CLAUDE_CODE_USE_BEDROCK" not in env, env
+    assert env["PATH"] == "x" and env["ENABLE_TOOL_SEARCH"] == "false"
+    cmd = chat.build_cmd("claude")
+    assert cmd[cmd.index("--mcp-config") + 1].endswith(f"claude_bridge_mcp_{claude_bridge.PORT}.json")
+    assert "logged out" in chat.classify_error("Invalid API key · Please run /login")
+    assert chat.classify_error("something odd") == "something odd"
+    # Big attachments are downscaled before sending
+    img = bpy.data.images.new("big", 3000, 200)
+    p = os.path.join(tempfile.gettempdir(), "claude_test_big.png")
+    img.filepath_raw, img.file_format = p, "PNG"
+    img.save()
+    small = chat._shrink_attachments([p])[0]
+    im = bpy.data.images.load(small)
+    assert small != p and max(im.size) == chat.MAX_IMAGE, im.size
+
+
+@test
 def t_missing_cli():
     chat.new_chat()
     orig = chat.find_claude
