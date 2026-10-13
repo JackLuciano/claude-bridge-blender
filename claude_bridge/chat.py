@@ -79,6 +79,7 @@ state = {
     "cost": 0.0,
     "usage": None,       # figures from the last reply's result event
     "batches": [],       # every bl call of this chat: {id, ops, ok}, for recipes
+    "draft": "",         # text of the reply being streamed right now
 }
 
 
@@ -141,6 +142,7 @@ def save():
 def load(cid):
     if state["busy"]:
         return False
+    _close_session()
     with open(_chat_path(cid), encoding="utf-8") as f:
         c = json.load(f)
     with _lock:
@@ -160,6 +162,11 @@ def delete(cid):
 
 
 def stop():
+    s = _session[0]
+    if s and state["busy"]:
+        s.interrupt()
+        _push("info", "stopping…")
+        return
     p = state["proc"]
     if p:
         _kill_tree(p)
@@ -168,6 +175,7 @@ def stop():
 
 def new_chat():
     stop()
+    _close_session()
     with _lock:
         state.update(chat_id=None, session=None, cost=0.0, history=[], attachments=[], usage=None, batches=[])
     turn.update(mark=None, before=None, after=None, changed=[], pushes=0)
@@ -445,10 +453,27 @@ def find_claude():
     return next((c for c in _candidates() if os.path.isfile(c)), None)
 
 
+def blender_python():
+    """Path of Blender's bundled Python. sys.executable is usually it, but on some macOS setups it points to a
+    path that doesn't exist; then look inside the app bundle next to the Blender binary."""
+    import glob
+    if sys.executable and os.path.isfile(sys.executable):
+        return sys.executable
+    exe_dir = os.path.dirname(bpy.app.binary_path)
+    pats = [os.path.join(exe_dir, "..", "Resources", "*", "python", "bin", "python3*"),  # macOS bundle
+            os.path.join(exe_dir, "*", "python", "bin", "python3*"),  # Linux / Windows portable
+            os.path.join(exe_dir, "*", "python", "bin", "python.exe")]
+    for p in pats:
+        hits = sorted(h for h in glob.glob(p) if os.path.isfile(h) and not h.endswith("-config"))
+        if hits:
+            return os.path.normpath(hits[0])
+    return sys.executable or "python3"
+
+
 def _mcp_config():
     # Blender's bundled Python runs the stdlib-only MCP server, so no system Python is needed.
     from . import PORT
-    cfg = {"mcpServers": {SERVER: {"command": sys.executable,
+    cfg = {"mcpServers": {SERVER: {"command": blender_python(),
                                    "args": [os.path.join(ADDON_DIR, "mcp_server.py")],
                                    "env": {"CLAUDE_BRIDGE_PORT": str(PORT)}}}}
     # One file per port: two Blenders must not overwrite each other's config.
@@ -490,7 +515,8 @@ def build_cmd(claude, session=None, model="opus", effort=None, extra=""):
            "--mcp-config", _mcp_config(), "--strict-mcp-config",
            "--allowedTools", f"mcp__{SERVER}__bl", f"mcp__{SERVER}__look",
            "--system-prompt-file", system_prompt_file(extra),
-           "--max-turns", str(MAX_TURNS)]
+           "--max-turns", str(MAX_TURNS),
+           "--include-partial-messages"]  # stream text as it's written (more events, same tokens)
     if effort and effort != "default":
         cmd += ["--effort", effort]
     if session:
@@ -548,7 +574,14 @@ def handle_event(ev):
     t = ev.get("type")
     if t == "system" and ev.get("subtype") == "init":
         state["session"] = ev.get("session_id", state["session"])
+    elif t == "stream_event":
+        e = ev.get("event") or {}
+        if e.get("type") == "content_block_delta" and (e.get("delta") or {}).get("type") == "text_delta":
+            state["draft"] = state.get("draft", "") + e["delta"].get("text", "")
+        elif e.get("type") == "message_start":
+            state["draft"] = ""
     elif t == "assistant":
+        state["draft"] = ""  # the full message replaces the streamed preview
         for b in _blocks(ev):
             if b.get("type") == "text" and b.get("text", "").strip():
                 _push("claude", b["text"].strip())
@@ -654,6 +687,96 @@ def handoff_prompt():
     asks = [t for r, t in state["history"] if r == "user"][-4:]
     return ("Continuing an earlier chat. The scene now:\n" + scene + "\nWhat I asked before:\n- " + "\n- ".join(asks)
             + "\nNext: ")
+
+
+class _Session:
+    """One claude process kept alive for a chat (opt-in): later messages skip CLI start-up and the MCP handshake,
+    and Stop interrupts the reply instead of killing it. Messages go in as stream-json lines on stdin."""
+
+    IDLE = 15 * 60
+
+    def __init__(self, cmd, key):
+        import collections
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        self.key = key
+        self.used = time.time()
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE,
+                                     text=True, encoding="utf-8", errors="replace", creationflags=flags,
+                                     start_new_session=os.name != "nt", cwd=chats_dir(), env=child_env())
+        self.tail = collections.deque(maxlen=40)
+        threading.Thread(target=lambda: self.tail.extend(self.proc.stderr), daemon=True).start()
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def alive(self):
+        return self.proc.poll() is None
+
+    def write(self, obj_):
+        self.used = time.time()
+        self.proc.stdin.write(json.dumps(obj_) + "\n")
+        self.proc.stdin.flush()
+
+    def _read(self):
+        for line in self.proc.stdout:
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                ev = json.loads(line)
+                handle_event(ev)
+            except Exception:
+                continue
+            if ev.get("type") == "result":
+                state["busy"] = False
+        # Process ended (crash, logout, killed)
+        if state["busy"]:
+            err = "".join(self.tail).strip()
+            _push("error", classify_error(err[-300:]) if err else "claude stopped unexpectedly")
+            state["busy"] = False
+
+    def interrupt(self):
+        """Ask the CLI to stop the current reply; kill it if it doesn't within a few seconds."""
+        try:
+            self.write({"type": "control_request", "request_id": uuid.uuid4().hex,
+                        "request": {"subtype": "interrupt"}})
+        except OSError:
+            pass
+
+        def later():
+            time.sleep(5)
+            if state["busy"]:
+                self.close()
+                state["busy"] = False
+        threading.Thread(target=later, daemon=True).start()
+
+    def close(self):
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        _kill_tree(self.proc)
+
+
+_session = [None]
+
+
+def _close_session():
+    s = _session[0]
+    _session[0] = None
+    if s:
+        s.close()
+
+
+def _send_persistent(cmd, message, key):
+    s = _session[0]
+    if s is None or not s.alive() or s.key != key:
+        _close_session()
+        s = _session[0] = _Session(cmd, key)
+    try:
+        s.write(message)
+    except OSError as e:
+        _close_session()
+        _push("error", f"failed to talk to claude: {e}")
+        state["busy"] = False
 
 
 def _worker(cmd, message):
@@ -820,8 +943,16 @@ def send(prompt, model="opus", effort=None, ctx=True):
     if seed:
         line = (line + "\n" if line else "") + seed
     state["busy"] = True
+    state["draft"] = ""
     cmd = build_cmd(claude, state["session"], model, effort, custom_instructions())
-    threading.Thread(target=_worker, args=(cmd, build_message(prompt, images, line)), daemon=True).start()
+    msg = build_message(prompt, images, line)
+    p = _prefs()
+    if p and p.persistent_cli:
+        from . import PORT
+        # Switching chats closes the session (new_chat/load), so the key only covers the CLI settings.
+        _send_persistent(cmd, msg, (model, effort, PORT, custom_instructions()))
+    else:
+        threading.Thread(target=_worker, args=(cmd, msg), daemon=True).start()
 
 
 def custom_instructions():
@@ -1283,6 +1414,8 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         box = layout.box()
         with _lock:
             hist = list(state["history"][-60:])
+            if state.get("draft"):
+                hist.append(("claude", state["draft"] + " …"))
         if not hist:
             box.label(text="Ask for anything, or start from one of these:", icon="INFO")
             grid = box.grid_flow(columns=2, even_columns=True, align=True)
@@ -1455,9 +1588,12 @@ def _redraw():
         except Exception as e:
             _push("error", f"change summary failed: {e}")
     _was_busy[0] = state["busy"]
+    s = _session[0]
+    if s and not state["busy"] and time.time() - s.used > _Session.IDLE:
+        _close_session()  # a resident CLI holds memory; start a fresh one next time
     from . import pending
     from .doctor import result as doc
-    sig = (len(state["history"]), state["busy"], len(state["attachments"]), state["chat_id"], len(pending),
+    sig = (len(state["history"]), len(state.get("draft", "")), state["busy"], len(state["attachments"]), state["chat_id"], len(pending),
            doc["checked"], doc["state"])
     if sig != _last[0]:
         _last[0] = sig
@@ -1505,6 +1641,7 @@ def register():
 
 def unregister():
     stop()
+    _close_session()
     if bpy.app.timers.is_registered(_redraw):
         bpy.app.timers.unregister(_redraw)
     if bpy.app.timers.is_registered(_paste_watch):

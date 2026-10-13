@@ -30,6 +30,9 @@ def main():
         for line in r.stdout.splitlines():
             if line.startswith(("PASS", "FAIL", "Traceback", "  ", "AssertionError")) or "passed" in line:
                 print(line)
+        if r.returncode != 0 and "passed" not in r.stdout:  # Blender itself failed: show why
+            print(f"Blender exited with {r.returncode}:")
+            print("\n".join((r.stdout + "\n" + r.stderr).splitlines()[-40:]))
         failed |= r.returncode != 0
     sys.exit(1 if failed else 0)
 
