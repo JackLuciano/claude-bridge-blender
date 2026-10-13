@@ -536,6 +536,56 @@ def t_nodes():
     assert ok, out
 
 
+@test
+def t_img_and_assets():
+    from claude_bridge import assets
+    fresh()
+    d = tempfile.mkdtemp()
+    for fn in ("planks_diff_1k.jpg", "planks_rough_1k.jpg", "planks_nor_gl_1k.jpg", "planks_nor_dx_1k.jpg", "planks_disp_1k.png"):
+        im = bpy.data.images.new(fn, 16, 16)
+        im.filepath_raw = os.path.join(d, fn)
+        im.file_format = "PNG" if fn.endswith("png") else "JPEG"
+        im.save()
+        bpy.data.images.remove(im)
+    maps = assets.detect_maps(d)
+    assert set(maps) == {"albedo", "rough", "normal", "disp"} and maps["normal"].endswith("nor_gl_1k.jpg"), maps
+    ok, out = run({"op": "add", "type": "plane", "name": "Deck", "dims": [6, 3, 0]},
+                  {"op": "img", "obj": "Deck", "dir": d, "size_m": 2, "name": "Planks"})
+    assert ok and "tile 2m box" in out, out
+    m = bpy.data.materials["Planks"]
+    bsdf = next(n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    assert all(bsdf.inputs[s].is_linked for s in ("Base Color", "Roughness", "Normal"))
+    assert any(n.type == "TEX_IMAGE" and n.image.colorspace_settings.is_data for n in m.node_tree.nodes)
+    # mat/tex work on a material whose Principled node isn't connected (seen on imports)
+    bad = bpy.data.materials.new("Imported")
+    bad.use_nodes = True
+    nt = bad.node_tree
+    for l in list(nt.links):
+        nt.links.remove(l)
+    ok, out = run({"op": "add", "type": "cube", "name": "Imp", "mat": "Imported"},
+                  {"op": "mat", "obj": "Imp", "name": "Imported", "color": "#ff0000"},
+                  {"op": "tex", "obj": "Imp", "kind": "noise"})
+    outn = next(n for n in nt.nodes if n.type == "OUTPUT_MATERIAL")
+    assert ok and outn.inputs["Surface"].is_linked, out
+    if os.environ.get("CLAUDE_BRIDGE_NET") == "1":  # real Poly Haven round trip
+        os.environ.setdefault("CLAUDE_BRIDGE_ASSETS", tempfile.mkdtemp())
+        ok, out = run({"op": "asset", "search": "wood planks floor"})
+        assert ok and "textures:" in out, out
+        first = out.split(": ", 1)[1].split(" ")[0]
+        ok, out = run({"op": "add", "type": "plane", "name": "PH", "dims": [4, 4, 0]},
+                      {"op": "asset", "id": first, "obj": "PH"},
+                      {"op": "asset", "search": "studio", "type": "hdris"})
+        assert ok and "img" in out and "hdris:" in out, out
+        hd = out.splitlines()[-1].split(": ", 1)[1].split(" ")[0]
+        ok, out = run({"op": "asset", "id": hd})
+        assert ok and out.startswith("world"), out
+        assert "Asset Credits" in bpy.data.texts
+        ok, out = run({"op": "asset", "search": "armchair", "type": "models"})
+        mid = out.split(": ", 1)[1].split(" ")[0]
+        ok, out = run({"op": "asset", "id": mid, "at": [3, 0]})
+        assert ok and "imported" in out and "base z0.00" in out, out
+
+
 def main():
     failed = 0
     for fn in TESTS:

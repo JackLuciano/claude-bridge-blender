@@ -62,6 +62,14 @@ JPEG. Every op replies with one short line, so trust the replies and keep image 
 `view{frame:"all"|"sel"|name, preset:"front"|"top"|..., orbit:[yaw,pitch], shading:"material"}` moves the user's own
 view. Use `shading:"material"` after adding materials so they see colours.
 
+## Real textures, HDRIs and models (free, Poly Haven)
+
+For hero surfaces use photo textures instead of `tex`: `asset{search:"oak floor"}` lists ids, then
+`asset{id:"...",obj:"Floor"}` applies the full PBR set at its real size. `asset{search:"studio",type:"hdris"}` +
+`asset{id}` lights the world. `asset{search:"armchair",type:"models"}` + `asset{id,at:[x,y]}` imports a ready model
+on the floor. Downloads take a few seconds; 1k is the default (`res:"2k"` for close-ups). The user's own texture
+folders work with `img{obj,dir:"C:/textures/bricks",size_m:2}`.
+
 ## Custom shaders and Geometry Nodes
 
 `nodes` builds graphs in one op: `nodes{mat:"Rust",add:{n:"noise",r:"ramp"},set:{"n.Scale":12,"r.0":"#3a2010"},

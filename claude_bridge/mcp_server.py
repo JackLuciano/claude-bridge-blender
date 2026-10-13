@@ -24,6 +24,8 @@ curve{name,pts[[x,y,z]..],type:poly|smooth,cyclic,bevel,fill,lathe[[r,z]..],step
 fit{obj,height|longest|dims,at,floor,apply,faces}  (normalize imports; import{path,fit:true|{height}})
 mat{obj,name,color,metal,rough,alpha,transmission,ior,emit,emit_strength,coat,spec,slot}
 tex{obj|mat,kind:wood|fabric|marble|noise|brick|checker|tiles|leather|concrete,color1,color2,scale,bump,rough[min,max]}  (procedural texture)
+img{obj|mat,path|dir|maps{albedo,rough,normal,metal,disp,ao},size_m,proj:box|uv}  (photo PBR set at real scale, no UVs needed)
+asset{search,type:textures|hdris|models} -> ids; asset{id,res,obj|mat,size_m | rot,strength | at,height}  (free CC0 Poly Haven; downloads)
 mod{obj,type:bevel|subsurf|array|mirror|solidify|bool|decimate|weld|wireframe|screw|displace|remesh|nodes|...,name,props{},inputs{GN input:val},apply}
 nodes{mat|obj|world|gn|comp, add{id:type|alias}, set{"id.Socket":v,"id.prop":v,"ramp.0":"#hex"}, link["a.Out>b.In"], del[ids], show, preset:"scatter"+instance,density,scale}  (ids: bsdf,out,bg,in,rl)
 apply{obj,mod:name|"all",xform:loc|rot|scale|all}
@@ -44,7 +46,7 @@ py{code}  (last resort; set `out` to return)"""
 # Mirrors ops.OPS (this process has no bpy); tests/test_integration.py checks they match.
 OP_NAMES = ["scene", "info", "get", "prop", "add", "set", "move", "del", "dup", "select", "join", "mat", "tex", "mod",
             "apply", "aim", "cam", "view", "bop", "py", "undo", "redo", "save", "open", "new", "import", "export",
-            "render", "world", "place", "check", "api", "key", "anim", "con", "fit", "col", "rename", "curve", "edit", "nodes"]
+            "render", "world", "place", "check", "api", "key", "anim", "con", "fit", "col", "rename", "curve", "edit", "nodes", "img", "asset"]
 
 TOOLS = [
     {
