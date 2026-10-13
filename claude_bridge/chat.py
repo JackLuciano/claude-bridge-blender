@@ -10,6 +10,7 @@ Chats are persisted as JSON files and can be reopened; reopening resumes the Cla
 import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -261,13 +262,16 @@ def grab_clipboard_image(dst):
         script = (f'set f to open for access POSIX file "{dst}" with write permission\n'
                   "write (the clipboard as «class PNGf») to f\nclose access f")
         return subprocess.run(["osascript", "-e", script], capture_output=True).returncode == 0
-    for cmd in (["wl-paste", "--type", "image/png"], ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"]):
-        if shutil.which(cmd[0]):
-            r = subprocess.run(cmd, capture_output=True)
-            if r.returncode == 0 and r.stdout.startswith(b"\x89PNG"):
-                with open(dst, "wb") as f:
-                    f.write(r.stdout)
-                return True
+    tools = [c for c in (["wl-paste", "--type", "image/png"], ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"])
+             if shutil.which(c[0])]
+    if not tools:
+        raise ValueError("pasting images needs wl-clipboard (Wayland) or xclip (X11): install one, or attach a file")
+    for cmd in tools:
+        r = subprocess.run(cmd, capture_output=True)
+        if r.returncode == 0 and r.stdout.startswith(b"\x89PNG"):
+            with open(dst, "wb") as f:
+                f.write(r.stdout)
+            return True
     return False
 
 
@@ -385,6 +389,42 @@ def build_message(prompt, images, ctx=None):
 
 # ---------------------------------------------------------------- CLI process
 
+_login_path = [None]
+
+
+def login_shell_path():
+    """macOS/Linux: Blender started from the Dock or a .desktop file gets a minimal PATH without Homebrew, npm or nvm.
+    Ask the user's login shell for the real PATH once (cached)."""
+    if os.name == "nt":
+        return ""
+    if _login_path[0] is None:
+        _login_path[0] = ""
+        sh = os.environ.get("SHELL") or "/bin/sh"
+        try:
+            r = subprocess.run([sh, "-ilc", 'printf "__P__%s" "$PATH"'], capture_output=True, text=True, timeout=10)
+            if "__P__" in r.stdout:
+                _login_path[0] = r.stdout.rsplit("__P__", 1)[1].strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return _login_path[0]
+
+
+def _candidates():
+    home = os.path.expanduser("~")
+    c = [os.path.join(home, ".local", "bin", "claude.exe"), os.path.join(home, ".local", "bin", "claude"),
+         os.path.join(home, ".claude", "local", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
+         os.path.join(home, ".npm-global", "bin", "claude"), os.path.join(home, ".bun", "bin", "claude")]
+    if os.environ.get("APPDATA"):
+        c.append(os.path.join(os.environ["APPDATA"], "npm", "claude.cmd"))
+    nvm = os.path.join(home, ".nvm", "versions", "node")
+    if os.path.isdir(nvm):
+        def ver(v):
+            return [int(x) for x in re.findall(r"\d+", v)[:3]] or [0]
+        for v in sorted(os.listdir(nvm), key=ver, reverse=True):
+            c.append(os.path.join(nvm, v, "bin", "claude"))
+    return c
+
+
 def find_claude():
     p = _prefs()
     if p and p.claude_path and os.path.exists(bpy.path.abspath(p.claude_path)):
@@ -392,11 +432,12 @@ def find_claude():
     exe = shutil.which("claude")
     if exe:
         return exe
-    for p in (os.path.expanduser("~/.local/bin/claude.exe"), os.path.expanduser("~/.local/bin/claude"),
-              os.path.expanduser("~/.claude/local/claude")):
-        if os.path.exists(p):
-            return p
-    return None
+    lp = login_shell_path()
+    if lp:
+        exe = shutil.which("claude", path=lp)
+        if exe:
+            return exe
+    return next((c for c in _candidates() if os.path.isfile(c)), None)
 
 
 def _mcp_config():
@@ -548,6 +589,9 @@ def child_env(base=None):
     env = dict(os.environ if base is None else base)
     for k in _NO_SUBSCRIPTION_ENV:
         env.pop(k, None)
+    lp = login_shell_path() if base is None else ""
+    if lp:  # the CLI (a node script) needs node on PATH too
+        env["PATH"] = lp + os.pathsep + env.get("PATH", "")
     env["ENABLE_TOOL_SEARCH"] = "false"  # load the two bridge tools up front, not via a ToolSearch round trip
     return env
 
@@ -785,7 +829,6 @@ def custom_instructions():
 
 def _plain(text):
     """Blender labels can't render markdown: drop emphasis/code markers and turn bullets into •."""
-    import re
     text = re.sub(r"\*\*(.+?)\*\*|__(.+?)__", lambda m: m.group(1) or m.group(2), text)
     text = re.sub(r"`([^`]*)`", r"\1", text)
     text = re.sub(r"^\s*#{1,6}\s*", "", text, flags=re.M)
@@ -1164,7 +1207,6 @@ def import_inbox():
             continue
         r = _handle_request({"ops": [{"op": "import", "path": p, "fit": True, "col": "Inbox"}]})
         text = r["text"]
-        import re
         m = re.search(r"dim\(([\d.]+),([\d.]+),([\d.]+)\)", text)
         if r["ok"] and m and not 0.05 <= max(float(x) for x in m.groups()) <= 30:
             names = text.splitlines()[0].split(": ", 1)[1].split(" +")[0].split(",")

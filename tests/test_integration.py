@@ -145,6 +145,51 @@ def port_fallback():
         state["errors"].append("port fallback")
 
 
+def chat_with_fake_cli(P):
+    """Full in-Blender chat round trip with a stand-in CLI: Blender -> fake claude -> MCP server -> bridge -> bpy."""
+    import tempfile
+    from claude_bridge import chat
+    out = tempfile.mkdtemp()
+    fake_dir = os.path.join(ROOT, "tests", "fake_claude")
+    os.environ.update(FAKE_CLAUDE_OUT=out, FAKE_CLAUDE_PY=sys.executable, ANTHROPIC_API_KEY="sk-should-not-leak")
+    os.environ.setdefault("CLAUDE_BRIDGE_CHATS", tempfile.mkdtemp())
+    P.safe_mode = False
+    P.send_context, P.custom_instructions, P.claude_path, P.chats_dir = True, "", "", ""
+    orig = chat.find_claude
+    chat.find_claude = lambda: os.path.join(fake_dir, "claude.cmd" if os.name == "nt" else "claude")
+    try:
+        chat.new_chat()
+        chat.send("make a green cube", "opus")
+        deadline = time.time() + 60
+        while chat.state["busy"] and time.time() < deadline:
+            claude_bridge._pump()
+            time.sleep(0.01)
+        chat._was_busy[0] = True  # the redraw timer saw the reply running (timers don't run headless)
+        chat._redraw()
+    finally:
+        chat.find_claude = orig
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+    call = json.load(open(os.path.join(out, "fake_claude_call.json")))
+    hist = chat.state["history"]
+
+    def check(name, cond, info=""):
+        print(("PASS " if cond else "FAIL ") + name + ("" if cond else f": {info}"))
+        if cond:
+            state["passed"] += 1
+        else:
+            state["errors"].append(f"{name}: {info}")
+    argv = call["argv"]
+    check("fake cli: flags", "--system-prompt-file" in argv and argv[argv.index("--model") + 1] == "opus"
+          and "--strict-mcp-config" in argv, argv)
+    check("fake cli: no API key leaks", not call["env_has_api_key"])
+    text = call["stdin"]["message"]["content"][-1]["text"]
+    check("fake cli: context line", text.startswith("[ctx mode object") and text.endswith("make a green cube"), text)
+    check("fake cli: cube built through MCP", "FakeCube" in bpy.data.objects, list(bpy.data.objects.keys()))
+    check("fake cli: chat history", ("claude", "Done.") in hist and any(r == "diff" and "+1 FakeCube" in t for r, t in hist),
+          hist)
+    check("fake cli: usage", chat.usage_line().startswith("ctx 6.0k"), chat.usage_line())
+
+
 def main():
     claude_bridge.start.base = PORT
     port_fallback()
@@ -161,9 +206,13 @@ def main():
             claude_bridge.resolve(claude_bridge.pending[0], state.pop("resolve"))
         claude_bridge._pump()
         time.sleep(0.01)
-    claude_bridge.stop()
     if not state["done"]:
         state["errors"].append("timeout")
+    try:
+        chat_with_fake_cli(P)
+    except Exception:
+        state["errors"].append(traceback.format_exc())
+    claude_bridge.stop()
     print(f"\n{state['passed']} passed, {len(state['errors'])} failed")
     for e in state["errors"]:
         print(e)

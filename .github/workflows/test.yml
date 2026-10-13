@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  headless:
+    name: ${{ matrix.os }} · Blender ${{ matrix.blender }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, blender: 4.2.23 }
+          - { os: ubuntu-latest, blender: 5.2.2 }
+          - { os: windows-latest, blender: 4.2.23 }
+          - { os: macos-latest, blender: 4.2.23 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache Blender
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: blender
+          key: blender-${{ matrix.blender }}-${{ runner.os }}
+
+      - name: Download Blender
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          v=${{ matrix.blender }}
+          base=https://download.blender.org/release/Blender${v%.*}
+          mkdir -p blender
+          case "$RUNNER_OS" in
+            Linux)
+              curl -sSL "$base/blender-$v-linux-x64.tar.xz" | tar -xJ -C blender --strip-components=1 ;;
+            Windows)
+              curl -sSL -o b.zip "$base/blender-$v-windows-x64.zip"
+              7z x -y b.zip -oblender_tmp > /dev/null
+              mv blender_tmp/*/* blender/ ;;
+            macOS)
+              curl -sSL -o b.dmg "$base/blender-$v-macos-arm64.dmg"
+              hdiutil attach -nobrowse -mountpoint /Volumes/B b.dmg > /dev/null
+              cp -R /Volumes/B/Blender.app blender/
+              hdiutil detach /Volumes/B > /dev/null ;;
+          esac
+
+      - name: Linux GL libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libegl1 libgl1 libxkbcommon0 libsm6 libxi6 libxxf86vm1 libxfixes3 libxrender1 > /dev/null
+
+      - name: Run tests
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux) B=blender/blender ;;
+            Windows) B=blender/blender.exe ;;
+            macOS) B=blender/Blender.app/Contents/MacOS/Blender ;;
+          esac
+          python run_tests.py --blender "$B"
