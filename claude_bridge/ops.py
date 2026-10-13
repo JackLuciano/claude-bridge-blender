@@ -1177,6 +1177,9 @@ def op_check(a):
             issues.append("no lights and no HDRI/sky -> world{hdri:'interior'} or add lights")
     if "cam" in only and roots and not sc.camera:
         issues.append("no camera -> cam{loc,at,lens}")
+    if "game" in only:  # only when asked: tris, UVs, transforms, n-gons, non-manifold, names
+        from .game import audit
+        return "\n".join(audit(a.get("obj", "all"), int(a.get("budget", 20000)))[:lim + 1])
     if not issues:
         return f"check ok ({len(roots)} objects)"
     more = len(issues) - lim
@@ -1445,6 +1448,10 @@ def op_import(a):
 
 @op("export")
 def op_export(a):
+    """a: path, args{} | preset (unity|unreal|godot) + obj + per:'object' (one file per object into the path folder)."""
+    if a.get("preset"):
+        from .game import export_preset
+        return export_preset(a)
     _file_op(_EXPORT, a)
     return f"exported {a['path']}"
 
@@ -1801,4 +1808,4 @@ def run_batch(batch):
 
 
 # Ops in other modules register themselves into OPS on import.
-from . import anim, assets, build, meshedit, nodes, room  # noqa: E402,F401
+from . import anim, assets, build, game, meshedit, nodes, room  # noqa: E402,F401

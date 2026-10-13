@@ -631,6 +631,29 @@ def t_room():
     assert ok and "Room_" not in out, out
 
 
+@test
+def t_game():
+    fresh()
+    ok, out = run({"op": "add", "type": "cylinder", "name": "Barrel Body", "args": {"vertices": 24}},
+                  {"op": "set", "obj": "Barrel Body", "scale": [1, 1, 2], "rot": [0, 0, 30]},
+                  {"op": "mod", "obj": "Barrel Body", "type": "subsurf", "props": {"levels": 2}},
+                  {"op": "check", "only": ["game"], "budget": 500})
+    assert ok and "OVER" in out and "unapplied rotation/scale" in out and "n-gons" in out and "name has spaces" in out, out
+    o = bpy.data.objects["Barrel Body"]
+    ok, out = run({"op": "apply", "obj": "Barrel Body", "mod": "all"})
+    while o.data.uv_layers:
+        o.data.uv_layers.remove(o.data.uv_layers[0])
+    ok, out = run({"op": "gameprep", "obj": "Barrel Body", "engine": "unreal", "lods": 2, "collision": True})
+    assert ok and "transforms" in out and "uv" in out and "LOD2" in out and "UCX_Barrel_Body_00" in out, out
+    o = bpy.data.objects["Barrel_Body"]
+    assert o.data.uv_layers and tuple(round(s, 4) for s in o.scale) == (1, 1, 1)
+    assert len(bpy.data.objects["Barrel_Body_LOD2"].data.polygons) < len(o.data.polygons) / 2
+    d = tempfile.mkdtemp()
+    ok, out = run({"op": "export", "path": d, "preset": "unity", "obj": "Barrel_Body", "per": "object"},
+                  {"op": "export", "path": os.path.join(d, "scene.glb"), "preset": "godot"})
+    assert ok and os.path.exists(os.path.join(d, "Barrel_Body.fbx")) and os.path.exists(os.path.join(d, "scene.glb")), out
+
+
 def main():
     failed = 0
     for fn in TESTS:

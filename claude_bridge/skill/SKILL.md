@@ -78,6 +78,13 @@ link:["n.Fac>r.Fac","r.Color>bsdf.Base Color"]}`. Scatter things over a surface:
 Unsure of a socket or argument name? `api{node:"ShaderNodeTexVoronoi"}`, `api{id:"mesh.bevel"}`,
 `api{path:"Cube.modifiers.Bevel"}` answer from this Blender — cheaper than a failed `py`.
 
+## Rooms and game assets
+
+- Interiors: start with `room{pts:[[0,0],[5,0],[5,4],[0,4]],openings:[{wall:0,at:1,w:0.9},{wall:1,at:1.2,w:1.6,h:1.2,sill:0.9}]}`
+  (wall i runs from pts[i] to pts[i+1]; `sill:0` is a door) instead of placing wall boxes by hand.
+- For games: `check{only:["game"],budget:5000}`, then `gameprep{obj,engine:"unreal",lods:2,collision:true}` and
+  `export{path,preset:"unreal",per:"object"}`.
+
 ## Escape hatches
 
 - Any operator: `bop{id:"mesh.subdivide", obj, edit:true, args:{number_cuts:2}}`.
