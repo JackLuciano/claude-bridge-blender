@@ -62,6 +62,14 @@ JPEG. Every op replies with one short line, so trust the replies and keep image 
 `view{frame:"all"|"sel"|name, preset:"front"|"top"|..., orbit:[yaw,pitch], shading:"material"}` moves the user's own
 view. Use `shading:"material"` after adding materials so they see colours.
 
+## Custom shaders and Geometry Nodes
+
+`nodes` builds graphs in one op: `nodes{mat:"Rust",add:{n:"noise",r:"ramp"},set:{"n.Scale":12,"r.0":"#3a2010"},
+link:["n.Fac>r.Fac","r.Color>bsdf.Base Color"]}`. Scatter things over a surface:
+`nodes{gn:"Rocks",obj:"Ground",preset:"scatter",instance:"Rock",density:3}` (hide or move the source object).
+Unsure of a socket or argument name? `api{node:"ShaderNodeTexVoronoi"}`, `api{id:"mesh.bevel"}`,
+`api{path:"Cube.modifiers.Bevel"}` answer from this Blender — cheaper than a failed `py`.
+
 ## Escape hatches
 
 - Any operator: `bop{id:"mesh.subdivide", obj, edit:true, args:{number_cuts:2}}`.

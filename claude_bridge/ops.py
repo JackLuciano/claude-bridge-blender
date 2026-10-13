@@ -895,8 +895,14 @@ def _set_gn_inputs(md, inputs):
             v = list(color(v))
         elif st == "NodeSocketRotation" and isinstance(v, (list, tuple)):
             v = [math.radians(x) for x in v]
-        md[s.identifier] = v
-    md.id_data.update_tag()  # ID-property writes don't trigger re-evaluation by themselves
+        props = getattr(md, "properties", None)
+        if props is not None and hasattr(props, "inputs") and hasattr(props.inputs, s.identifier):
+            # Blender 5.2+: inputs are RNA structs (md.properties.inputs.Socket_0.value)
+            item = getattr(props.inputs, s.identifier)
+            item.value = _coerce(item, "value", v) if not isinstance(v, bpy.types.ID) else v
+        else:
+            md[s.identifier] = v  # older Blender: ID properties keyed by socket identifier
+    md.id_data.update_tag()  # input writes don't always trigger re-evaluation by themselves
 
 
 def _set_rot(o, deg):
@@ -1724,4 +1730,4 @@ def run_batch(batch):
 
 
 # Ops in other modules register themselves into OPS on import.
-from . import anim, build, meshedit  # noqa: E402,F401
+from . import anim, build, meshedit, nodes  # noqa: E402,F401
