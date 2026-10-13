@@ -24,12 +24,17 @@ import bpy
 ADDON_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVER = "blender-bridge"
 MAX_ATTACH = 5
+MAX_TURNS = 30  # tool round trips per message; stops runaway loops
 
 SYSTEM_PROMPT = (
-    "You are inside Blender, talking to the user through a small sidebar chat. "
+    "You are Claude, working inside Blender and talking to the user through a small sidebar chat. "
     "Act on the scene with the `mcp__blender-bridge__bl` tool (batch several ops per call) and verify visually with `mcp__blender-bridge__look` "
     "(max 384 unless detail matters). Prefer ops over the `py` op. Images the user attaches are screenshots "
-    "of their Blender or references. Keep replies to 1-3 short sentences: the user sees the result in their viewport."
+    "of their Blender or references. Read every tool reply: on an ERR line, fix the cause and resend only the failed "
+    "part. Messages may start with a [ctx ...] line written by the addon (not the user): 'this'/'it' means the active "
+    "object, 'here' means the 3D cursor. Don't ask for permission for normal scene edits; do ask before deleting "
+    "things the user made. Keep replies to 1-3 short plain sentences without markdown: the user sees the result in "
+    "their viewport."
 )
 
 SKILL_FILE = os.path.join(ADDON_DIR, "skill", "SKILL.md")
@@ -365,14 +370,41 @@ def _mcp_config():
     return path
 
 
-def build_cmd(claude, session=None, model="opus"):
-    # Slim context: no built-in tools, skills, other MCP servers or user settings/hooks.
-    # Measured: ~62k -> ~6.7k context tokens per message, while keeping subscription (OAuth) auth.
+def system_prompt(extra=""):
+    text = SYSTEM_PROMPT + "\n\n" + skill_body()
+    if extra.strip():
+        text += "\n\n# The user's standing instructions\n\n" + extra.strip()
+    return text
+
+
+def system_prompt_file(extra=""):
+    """Write the chat's whole system prompt to a file (rewritten only when it changes, so it stays cache-friendly)."""
+    text = system_prompt(extra)
+    path = os.path.join(chats_dir(), "system_prompt.md")
+    try:
+        with open(path, encoding="utf-8") as f:
+            if f.read() == text:
+                return path
+    except OSError:
+        pass
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return path
+
+
+def build_cmd(claude, session=None, model="opus", effort=None, extra=""):
+    # Slim context: no built-in tools, skills, other MCP servers or user settings/hooks, and our own system
+    # prompt instead of Claude Code's coding-agent one (the chat never uses its tools or guidance).
+    # Measured: ~62k -> ~6.7k context tokens per message with --append-system-prompt; replacing the prompt saves
+    # a few thousand more on every call. A file also avoids a 5 KB multi-line argv through npm's claude.cmd shim.
     cmd = [claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
            "--tools=", "--disable-slash-commands", "--setting-sources=",
            "--mcp-config", _mcp_config(), "--strict-mcp-config",
            "--allowedTools", f"mcp__{SERVER}__bl", f"mcp__{SERVER}__look",
-           "--append-system-prompt", SYSTEM_PROMPT + "\n\n" + skill_body()]
+           "--system-prompt-file", system_prompt_file(extra),
+           "--max-turns", str(MAX_TURNS)]
+    if effort and effort != "default":
+        cmd += ["--effort", effort]
     if session:
         cmd += ["--resume", session]
     if model and model != "default":

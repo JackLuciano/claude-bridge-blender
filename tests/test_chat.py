@@ -147,8 +147,13 @@ def t_plain_markdown():
 def t_skill():
     body = chat.skill_body()
     assert body.startswith("# Working in Blender") and "name:" not in body.splitlines()[0]
-    cmd = chat.build_cmd("claude")
-    assert body in cmd[cmd.index("--append-system-prompt") + 1]
+    cmd = chat.build_cmd("claude", extra="Always use metric units.")
+    assert "--append-system-prompt" not in cmd
+    sp = open(cmd[cmd.index("--system-prompt-file") + 1], encoding="utf-8").read()
+    assert body in sp and chat.SYSTEM_PROMPT in sp and "Always use metric units." in sp
+    assert cmd[cmd.index("--max-turns") + 1] == str(chat.MAX_TURNS)
+    c = chat.build_cmd("claude", effort="low")
+    assert "--effort" not in cmd and c[c.index("--effort") + 1] == "low"
     home = tempfile.mkdtemp()
     path = chat.install_skill(home)
     text = open(path, encoding="utf-8").read()
