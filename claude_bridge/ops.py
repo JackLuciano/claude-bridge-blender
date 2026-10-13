@@ -455,7 +455,14 @@ def op_add(a):
     if a.get("smooth") and o.type == "MESH":
         for p in o.data.polygons:
             p.use_smooth = True
+    _to_col(o, a)
     return "+ " + summary(o)
+
+
+def _to_col(o, a):
+    if a.get("col"):
+        from .build import move_to_collection
+        move_to_collection(o, a["col"])
 
 
 @op("set")
@@ -529,6 +536,7 @@ def op_dup(a):
         c.location = src.location + off * (i + 1)
         if nm:
             c.name = nm
+        _to_col(c, a)
         out.append(c.name)
     return "+ " + ",".join(out)
 
@@ -1159,6 +1167,7 @@ def op_cam(a):
         op_aim({"obj": o.name, "at": a["at"]})
     if a.get("active", True):
         sc.camera = o
+    _to_col(o, a)
     return summary(o) + f" lens{_r(o.data.lens, 1)}"
 
 
@@ -1366,10 +1375,20 @@ def _file_op(table, a):
 
 @op("import")
 def op_import(a):
+    """a: path, args{}, fit (true or fit args like {height:1.8}: real size, on the floor), col."""
     before = set(bpy.data.objects)
     _file_op(_IMPORT, a)
-    new = [o.name for o in bpy.data.objects if o not in before]
-    return f"imported {len(new)}: " + ",".join(new[:20])
+    new = [o for o in bpy.data.objects if o not in before]
+    out = f"imported {len(new)}: " + ",".join(o.name for o in new[:20]) + (f" +{len(new) - 20}" if len(new) > 20 else "")
+    roots = [o for o in new if o.parent is None]
+    if a.get("col"):
+        for o in roots:
+            _to_col(o, a)
+    if a.get("fit") and roots:
+        from .build import op_fit
+        fa = a["fit"] if isinstance(a["fit"], dict) else {}
+        out += "\n" + op_fit({**fa, "obj": [o.name for o in roots]})
+    return out
 
 
 @op("export")
@@ -1677,4 +1696,4 @@ def run_batch(batch):
 
 
 # Ops in other modules register themselves into OPS on import.
-from . import anim  # noqa: E402,F401
+from . import anim, build  # noqa: E402,F401
