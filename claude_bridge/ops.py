@@ -694,8 +694,13 @@ def op_tex(a):
         wave.wave_type = "RINGS"
         wave.rings_direction = grain
         wave.inputs["Scale"].default_value = scale * 0.6
-        wave.inputs["Distortion"].default_value = 6
-        wave.inputs["Detail"].default_value = 4
+        wave.inputs["Distortion"].default_value = 3
+        wave.inputs["Detail"].default_value = 6
+        wave.inputs["Detail Scale"].default_value = 2
+        # Squash coordinates along the grain so the distortion noise turns into long streaks, not dunes.
+        s = list(mapping.inputs["Scale"].default_value)
+        s["XYZ".index(grain)] *= 0.12
+        mapping.inputs["Scale"].default_value = s
         nt.links.new(mapping.outputs["Vector"], wave.inputs["Vector"])
         fac = wave.outputs["Fac"]
     elif kind in ("fabric", "leather", "concrete", "noise"):
@@ -1060,32 +1065,50 @@ def op_check(a):
     roots = _roots(a.get("obj", "all"))
     issues = []
     if "floating" in only:
+        tol = 0.002
+        boxes = {o.name: _wbox([o]) for o in roots}
         for o in roots:
-            lo, hi = _wbox([o])
-            if lo.z < 0.002:
+            lo, hi = boxes[o.name]
+            if lo.z < tol:
                 continue
-            c = (lo + hi) / 2
-            below = None
-            best = None
+            supported, best, below = False, None, None
             for other in roots:
                 if other is o:
                     continue
-                olo, ohi = _wbox([other])
-                if olo.x <= c.x <= ohi.x and olo.y <= c.y <= ohi.y and ohi.z <= lo.z + 0.002:
-                    z = _surface_z(other, c.x, c.y)
-                    if z <= lo.z + 0.002 and (best is None or z > best):
+                olo, ohi = boxes[other.name]
+                # Only things under the object's footprint can hold it up (legs at the corners count too).
+                if ohi.x <= lo.x + 1e-3 or olo.x >= hi.x - 1e-3 or ohi.y <= lo.y + 1e-3 or olo.y >= hi.y - 1e-3:
+                    continue
+                if olo.z < lo.z - tol and ohi.z >= lo.z - tol:
+                    supported = True  # touches or reaches into it from below (seat on legs, shade on a pole)
+                    break
+                if ohi.z < lo.z - tol:
+                    z = _surface_z(other, (max(lo.x, olo.x) + min(hi.x, ohi.x)) / 2, (max(lo.y, olo.y) + min(hi.y, ohi.y)) / 2)
+                    z = min(z, ohi.z)
+                    if best is None or z > best:
                         best, below = z, other
+            if supported:
+                continue
             gap = lo.z - (best if best is not None else 0.0)
-            if gap > 0.002:
+            if gap > tol:
                 where = f"above {below.name}" if below else "above the floor"
                 issues.append(f"floating {o.name} {_r(gap, 3)} {where} -> place{{obj:'{o.name}',on:'{below.name if below else 'floor'}'}}")
     if "overlap" in only:
         boxes = [(o, *_wbox([o])) for o in roots]
         trees = {}
+
+        def asset(o):
+            # Parts of one asset (same non-scene collection) are meant to touch and intersect.
+            cols = [c for c in o.users_collection if c != sc.collection]
+            return cols[0].name if cols else None
         for i, (o1, lo1, hi1) in enumerate(boxes):
             for o2, lo2, hi2 in boxes[i + 1:]:
                 if any(hi1[k] < lo2[k] + 1e-4 or hi2[k] < lo1[k] + 1e-4 for k in range(3)):
                     continue
+                if asset(o1) and asset(o1) == asset(o2):
+                    continue
+                if min(min(hi1[k], hi2[k]) - max(lo1[k], lo2[k]) for k in range(3)) < 0.02:
+                    continue  # resting contact (a leg on a rug, a book against a shelf), not a clash
                 n = 0
                 for x1 in _tree(o1):
                     for x2 in _tree(o2):
@@ -1102,6 +1125,9 @@ def op_check(a):
         from bpy_extras.object_utils import world_to_camera_view
         for o in roots:
             lo, hi = _wbox([o])
+            d = hi - lo
+            if min(d) < 0.15 and max(d) > 2:
+                continue  # floors, walls, rugs: room surfaces are meant to run past the frame
             corners = [mathutils.Vector((x, y, z)) for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
             vs = [world_to_camera_view(sc, sc.camera, p) for p in corners]
             inside = [0 <= v.x <= 1 and 0 <= v.y <= 1 and v.z > 0 for v in vs]
