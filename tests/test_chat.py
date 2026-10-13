@@ -382,6 +382,32 @@ def t_templates_recipes_teach():
 
 
 @test
+def t_doctor():
+    from claude_bridge import doctor
+    claude_bridge.register()
+    try:
+        orig = chat.find_claude
+        chat.find_claude = lambda: None
+        try:
+            items = doctor.check()
+        finally:
+            chat.find_claude = orig
+        assert items == [(False, "claude CLI not found", "install")], items
+        real = chat.find_claude()
+        if real:  # the real CLI on this machine: version + flags + login + bridge lines
+            items = doctor.check(real)
+            labels = " | ".join(l for _, l, _ in items)
+            assert items[0][0], labels
+            assert "Bridge" in labels, labels
+        doctor.recent_ops.append("add,mat")
+        doctor.last_stderr[0] = "boom at " + os.path.expanduser("~")
+        d = doctor.diagnostics()
+        assert "Claude Bridge" in d and "add,mat" in d and os.path.expanduser("~") not in d, d
+    finally:
+        claude_bridge.unregister()
+
+
+@test
 def t_missing_cli():
     chat.new_chat()
     orig = chat.find_claude
