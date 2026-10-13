@@ -251,6 +251,39 @@ def t_preferences():
 
 
 @test
+def t_turn_ledger():
+    from claude_bridge import ops
+    chat.new_chat()
+    ops.op_new({})
+    ops.run_batch([{"op": "add", "type": "cube", "name": "Old"}, {"op": "add", "type": "cube", "name": "Gone"}])
+    bpy.ops.ed.undo_push(message="setup")
+    chat._turn_start()
+    claude_bridge._handle_request({"ops": [{"op": "add", "type": "sphere", "name": "Lamp"},
+                                           {"op": "move", "obj": "Old", "by": [1, 0, 0]}]})
+    claude_bridge._handle_request({"ops": [{"op": "scene"}]})  # read-only: no undo step
+    claude_bridge._handle_request({"ops": [{"op": "del", "obj": "Gone"}]})
+    chat._turn_end()
+    assert chat.turn["pushes"] == 2, chat.turn
+    role, text = chat.state["history"][-1]
+    assert role == "diff" and text == "+1 Lamp · ~1 Old moved · -1 Gone", text
+    assert set(chat.turn["changed"]) == {"Lamp", "Old"}
+    assert chat.can_revert() == (True, "")
+    chat.revert_turn()
+    names = set(bpy.context.scene.objects.keys())
+    assert names == {"Old", "Gone"}, names
+    assert round(bpy.data.objects["Old"].location.x, 3) == 0
+    assert not chat.can_revert()[0]
+    # A hand edit after the reply blocks revert and is reported with the next message
+    chat._turn_start()
+    claude_bridge._handle_request({"ops": [{"op": "add", "type": "cube", "name": "New2"}]})
+    chat._turn_end()
+    bpy.data.objects["Old"].location.z = 3
+    ok, why = chat.can_revert()
+    assert not ok and "edited" in why, why
+    assert chat.user_edits_since_turn() == "~1 Old moved", chat.user_edits_since_turn()
+
+
+@test
 def t_missing_cli():
     chat.new_chat()
     orig = chat.find_claude
