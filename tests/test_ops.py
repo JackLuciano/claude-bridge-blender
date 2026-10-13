@@ -230,6 +230,14 @@ def t_export_import_render():
                   {"op": "add", "type": "sun"},
                   {"op": "render", "path": png, "res": [64, 48], "engine": "BLENDER_WORKBENCH"})
     assert ok and os.path.exists(png), out
+    # Settings are restored, and look:true hands back a small JPEG
+    r = bpy.context.scene.render
+    before = (r.engine, r.resolution_x, r.resolution_percentage)
+    ok, out = run({"op": "render", "res": [80, 60], "engine": "BLENDER_WORKBENCH", "preview": True, "look": True, "max": 64})
+    assert ok and (r.engine, r.resolution_x, r.resolution_percentage) == before, (out, r.engine)
+    assert len(ops.IMAGES) == 1 and ops.IMAGES[0].endswith(".jpg") and os.path.exists(ops.IMAGES[0])
+    ok, out = run({"op": "del", "obj": "Camera"}, {"op": "render"})
+    assert not ok and "no scene camera" in out, out
 
 
 @test

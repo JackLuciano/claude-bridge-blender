@@ -51,7 +51,10 @@ def _handle_request(req: dict) -> dict:
         except Exception:
             pass
         PUSHES += 1
-    return {"ok": ok, "text": "\n".join(results)}
+    resp = {"ok": ok, "text": "\n".join(results)}
+    if bridge_ops.IMAGES:
+        resp["images"] = list(bridge_ops.IMAGES)
+    return resp
 
 
 PUSHES = 0  # undo steps pushed by the bridge; the chat uses it to revert a whole turn

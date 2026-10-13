@@ -1217,29 +1217,77 @@ def op_export(a):
     return f"exported {a['path']}"
 
 
+IMAGES = []  # images produced by ops in the current batch; returned to Claude with the batch reply
+
+
+def _samples_attr(sc):
+    r = sc.render
+    if r.engine == "CYCLES":
+        return sc.cycles, "samples"
+    if hasattr(sc, "eevee") and hasattr(sc.eevee, "taa_render_samples"):
+        return sc.eevee, "taa_render_samples"
+    return None, None
+
+
 @op("render")
 def op_render(a):
-    """a: path (default temp png), res [w,h], pct, samples, engine. Returns the file path."""
+    """Render the camera view. The user's render settings are restored afterwards.
+    a: path (default temp png), res [w,h], pct, samples, engine, preview (50%, few samples: quick check),
+    look (also return the image to Claude; max = its longest side, default 512)."""
     sc = bpy.context.scene
+    if sc.camera is None:
+        raise ValueError("no scene camera: cam{loc,at} first")
     r = sc.render
-    if "engine" in a:
-        try:
-            r.engine = a["engine"].upper()
-        except TypeError as e:
-            raise ValueError(str(e))
-    if "res" in a:
-        r.resolution_x, r.resolution_y = a["res"]
-    if "pct" in a:
-        r.resolution_percentage = a["pct"]
-    if "samples" in a:
-        if r.engine == "CYCLES":
-            sc.cycles.samples = a["samples"]
-        elif hasattr(sc, "eevee"):
-            sc.eevee.taa_render_samples = a["samples"]
-    path = a.get("path") or os.path.join(tempfile.gettempdir(), "claude_render.png")
-    r.filepath = path
-    bpy.ops.render.render(write_still=True)
+    holder, sattr = _samples_attr(sc)
+    saved = (r.engine, r.resolution_x, r.resolution_y, r.resolution_percentage,
+             getattr(holder, sattr) if holder else None)
+    try:
+        if "engine" in a:
+            try:
+                r.engine = a["engine"].upper()
+            except TypeError as e:
+                raise ValueError(str(e))
+        if "res" in a:
+            r.resolution_x, r.resolution_y = a["res"]
+        if "pct" in a:
+            r.resolution_percentage = a["pct"]
+        h, at = _samples_attr(sc)
+        if a.get("preview"):
+            r.resolution_percentage = min(r.resolution_percentage, 50)
+            if h:
+                setattr(h, at, min(getattr(h, at), 16))
+        if "samples" in a and h:
+            setattr(h, at, a["samples"])
+        bpy.ops.render.render()
+        path = a.get("path") or os.path.join(tempfile.gettempdir(), "claude_render.png")
+        bpy.data.images["Render Result"].save_render(filepath=path)
+    finally:
+        r.engine, r.resolution_x, r.resolution_y, r.resolution_percentage = saved[:4]
+        if holder and saved[4] is not None:
+            setattr(holder, sattr, saved[4])
+    if a.get("look"):
+        IMAGES.append(_jpeg(path, int(a.get("max", 512)), "claude_render_look.jpg"))
     return f"rendered {path}"
+
+
+def _jpeg(src, size, name):
+    """Downscaled JPEG copy of an image file in the temp folder (for sending to Claude)."""
+    out = os.path.join(tempfile.gettempdir(), name)
+    img = bpy.data.images.load(src, check_existing=False)
+    try:
+        w, h = img.size
+        k = min(1.0, size / max(w, h, 1))
+        if k < 1.0:
+            img.scale(max(1, round(w * k)), max(1, round(h * k)))
+        img.filepath_raw = out
+        img.file_format = "JPEG"
+        try:
+            img.save(quality=80)
+        except TypeError:  # older Blender: no quality argument
+            img.save()
+    finally:
+        bpy.data.images.remove(img)
+    return out
 
 
 # ---------------------------------------------------------------- look (image feedback)
@@ -1341,6 +1389,7 @@ def undo_label(batch):
 
 
 def run_batch(batch):
+    IMAGES.clear()
     results, ok = [], True
     switched = False
     for i, a in enumerate(batch):
