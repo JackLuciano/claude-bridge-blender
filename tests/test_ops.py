@@ -11,7 +11,10 @@ import traceback
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+import math  # noqa: E402
+
 import bpy  # noqa: E402
+import mathutils  # noqa: E402
 
 from claude_bridge import ops  # noqa: E402
 
@@ -345,6 +348,42 @@ def t_place_and_check():
     assert "overlap A1 x A2" in out and "no camera" in out and "no lights" in out, out
     ok, out = run({"op": "place", "obj": "A2", "against": "A1", "side": "+x"}, {"op": "check", "only": ["overlap"]})
     assert ok and "A2[mesh] @(9,0,0.5)" in out and out.endswith("check ok (5 objects)"), out
+
+
+@test
+def t_coercion_and_api():
+    fresh()
+    ok, out = run({"op": "add", "type": "spot", "name": "Spot"},
+                  {"op": "set", "obj": "Spot", "props": {"spot_size": 45, "color": "#ff0000"}},
+                  {"op": "prop", "path": "Spot.data.shadow_soft_size", "value": 0.2},
+                  {"op": "add", "type": "cube", "name": "Q"},
+                  {"op": "set", "obj": "Q", "props": {"rotation_mode": "quaternion"}},
+                  {"op": "set", "obj": "Q", "rot": [0, 0, 90]},
+                  {"op": "move", "obj": "Q", "rot": [0, 0, 90]},
+                  {"op": "mod", "obj": "Q", "type": "bevel", "props": {"angle_limit": 40, "limit_method": "angle"}},
+                  {"op": "add", "type": "cube", "name": "Cutter"},
+                  {"op": "mod", "obj": "Q", "type": "bool", "props": {"object": "Cutter"}})
+    assert ok, out
+    spot = bpy.data.objects["Spot"].data
+    assert abs(spot.spot_size - 0.7854) < 1e-3 and spot.color[0] > 0.99 and spot.color[1] < 0.01
+    q = bpy.data.objects["Q"]
+    assert abs(abs(q.rotation_quaternion.to_euler().z) - math.pi) < 1e-3, tuple(q.rotation_quaternion)
+    assert abs(q.modifiers["bevel"].angle_limit - math.radians(40)) < 1e-4 and q.modifiers["bevel"].limit_method == "ANGLE"
+    assert q.modifiers["bool"].object.name == "Cutter"
+    ok, out = run({"op": "mod", "obj": "Q", "name": "Nope", "props": {}})
+    assert not ok and "give type" in out, out
+    ok, out = run({"op": "mod", "obj": "Q", "name": "bevel", "props": {"wdth": 1}})
+    assert not ok and "has no 'wdth'" in out, out
+    # api lookups
+    ok, out = run({"op": "api", "id": "mesh.subdivide"}, {"op": "api", "path": "Q.modifiers.bevel"},
+                  {"op": "api", "node": "ShaderNodeTexNoise"}, {"op": "api", "search": "bevel"})
+    assert ok and "number_cuts:int" in out and "width:float" in out and "Scale" in out and "mesh.bevel" in out, out
+    # aim respects parents
+    ok, out = run({"op": "add", "type": "empty", "name": "Rig", "rot": [0, 0, 45]}, {"op": "cam", "name": "C2", "loc": [5, 0, 1]},
+                  {"op": "set", "obj": "C2", "parent": "Rig"}, {"op": "aim", "obj": "C2", "at": [0, 0, 0]})
+    cam = bpy.data.objects["C2"]
+    fwd = cam.matrix_world.to_quaternion() @ mathutils.Vector((0, 0, -1))
+    assert ok and fwd.dot((-cam.matrix_world.translation).normalized()) > 0.999, out
 
 
 def main():
