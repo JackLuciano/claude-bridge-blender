@@ -77,6 +77,7 @@ state = {
     "busy": False,
     "cost": 0.0,
     "usage": None,       # figures from the last reply's result event
+    "batches": [],       # every bl call of this chat: {id, ops, ok}, for recipes
 }
 
 
@@ -123,7 +124,8 @@ def save():
             state["chat_id"] = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
         first = next((t for r, t in state["history"] if r == "user"), "New chat")
         data = {"id": state["chat_id"], "title": first.splitlines()[0][:48], "updated": time.time(),
-                "session": state["session"], "cost": state["cost"], "history": state["history"]}
+                "session": state["session"], "cost": state["cost"], "history": state["history"],
+                "batches": state["batches"]}
         path = _chat_path(state["chat_id"])
         with open(path + ".tmp", "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -137,6 +139,7 @@ def load(cid):
         c = json.load(f)
     with _lock:
         state.update(chat_id=c["id"], session=c.get("session"), cost=c.get("cost", 0.0), attachments=[], usage=None,
+                     batches=list(c.get("batches", [])),
                      history=[tuple(x) for x in c.get("history", [])])
     return True
 
@@ -160,7 +163,7 @@ def stop():
 def new_chat():
     stop()
     with _lock:
-        state.update(chat_id=None, session=None, cost=0.0, history=[], attachments=[], usage=None)
+        state.update(chat_id=None, session=None, cost=0.0, history=[], attachments=[], usage=None, batches=[])
     turn.update(mark=None, before=None, after=None, changed=[], pushes=0)
 
 
@@ -477,6 +480,15 @@ def _tool_summary(block):
     return f"{name} {json.dumps(inp)[:60]}"
 
 
+def how_to(block):
+    """Teach mode: the manual way to do what a tool call just did (generated locally, zero tokens)."""
+    p = _prefs()
+    if not p or not p.teach_mode:
+        return ""
+    from . import teach
+    return teach.hints(block)
+
+
 def _blocks(ev):
     """Content blocks of a message event; content may also be a plain string."""
     c = (ev.get("message") or {}).get("content")
@@ -496,9 +508,20 @@ def handle_event(ev):
                 _push("claude", b["text"].strip())
             elif b.get("type") == "tool_use":
                 _push("tool", _tool_summary(b))
+                if b.get("name", "").endswith("__bl"):
+                    # Keep the full ops so a good build can be replayed or shared later without Claude.
+                    with _lock:
+                        state["batches"].append({"id": b.get("id"), "ops": (b.get("input") or {}).get("ops", []),
+                                                 "ok": True})
+                hint = how_to(b)
+                if hint:
+                    _push("hint", hint)
     elif t == "user":
         for b in _blocks(ev):
             if b.get("type") == "tool_result" and b.get("is_error"):
+                for bt in state["batches"]:
+                    if bt["id"] and bt["id"] == b.get("tool_use_id"):
+                        bt["ok"] = False
                 c = b.get("content")
                 txt = c if isinstance(c, str) else " ".join(x.get("text", "") for x in c or [] if isinstance(x, dict))
                 # Batch output lists every op; show the failing line, not the successful ones before it.
@@ -946,6 +969,168 @@ class CLAUDE_OT_select_changed(bpy.types.Operator):
         return {"FINISHED"}
 
 
+# ---------------------------------------------------------------- starters and templates
+
+def templates():
+    """Bundled starters plus the user's own <CONFIG>/claude_bridge/templates.json (same format, same label wins)."""
+    items = []
+    for path in (os.path.join(ADDON_DIR, "starters.json"), os.path.join(os.path.dirname(chats_dir()), "templates.json")):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        for t in data if isinstance(data, list) else []:
+            if isinstance(t, dict) and t.get("label") and (t.get("prompt") or t.get("recipe")):
+                items = [x for x in items if x["label"] != t["label"]] + [t]
+    return items
+
+
+def _fill(prompt):
+    ctx = bpy.context
+    sel = [o.name for o in ctx.selected_objects]
+    act = ctx.view_layer.objects.active
+    return (prompt.replace("{sel}", ", ".join(sel[:8]) or "the selected objects")
+            .replace("{active}", act.name if act else "the active object")
+            .replace("{target}", ", ".join(sel[:8]) if sel else "the scene")
+            .replace("{file}", bpy.path.basename(bpy.data.filepath) or "this file"))
+
+
+def visible_templates(empty_only=False):
+    ctx = bpy.context
+    has_sel = bool(ctx.selected_objects)
+    has_objs = bool(ctx.scene.objects)
+    out = []
+    for i, t in enumerate(templates()):
+        w = t.get("when", "any")
+        if empty_only:
+            if w == "empty" or (w == "selection" and has_sel):
+                out.append((i, t))
+        elif (w != "selection" or has_sel) and (w != "empty" or not has_objs):
+            out.append((i, t))
+    return out
+
+
+class CLAUDE_OT_template(bpy.types.Operator):
+    bl_idname = "claude.chat_template"
+    bl_label = "Run template"
+    bl_description = "Send this ready-made request (nothing is spent until you click)"
+
+    index: bpy.props.IntProperty()
+
+    @classmethod
+    def description(cls, context, props):
+        ts = templates()
+        if 0 <= props.index < len(ts):
+            t = ts[props.index]
+            return t.get("prompt") or "Builds a bundled demo scene without calling Claude (zero tokens)"
+        return cls.bl_description
+
+    def execute(self, context):
+        ts = templates()
+        if not 0 <= self.index < len(ts) or state["busy"]:
+            return {"CANCELLED"}
+        t = ts[self.index]
+        if t.get("recipe"):
+            from . import recipes
+            try:
+                _push("info", recipes.replay_bundled(t["recipe"]))
+            except Exception as e:
+                self.report({"ERROR"}, str(e))
+                return {"CANCELLED"}
+            try:
+                from . import ops
+                ops.op_view({"preset": "camera", "shading": "material"})
+            except Exception:
+                pass  # no viewport (background mode)
+            return {"FINISHED"}
+        send_from_ui(_fill(t["prompt"]), context.window_manager, model=t.get("model"))
+        return {"FINISHED"}
+
+
+class CLAUDE_OT_recipe_export(bpy.types.Operator):
+    bl_idname = "claude.recipe_export"
+    bl_label = "Save as recipe"
+    bl_description = ("Save this chat's scene changes as a recipe that rebuilds the scene without Claude "
+                      "(zero tokens), plus a Markdown transcript")
+
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+    filter_glob: bpy.props.StringProperty(default="*.json", options={"HIDDEN"})
+
+    def invoke(self, context, event):
+        from . import recipes
+        try:
+            recipes.from_chat(state)
+        except ValueError as e:
+            self.report({"WARNING"}, str(e))
+            return {"CANCELLED"}
+        title = next((t for r, t in state["history"] if r == "user"), "recipe")
+        safe = "".join(ch if ch.isalnum() else "_" for ch in title[:32]).strip("_") or "recipe"
+        self.filepath = os.path.join(os.path.expanduser("~"), f"{safe}.bridge-recipe.json")
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        from . import recipes
+        path = recipes.save(recipes.from_chat(state), self.filepath)
+        with open(os.path.splitext(path)[0] + ".md", "w", encoding="utf-8") as f:
+            f.write(recipes.transcript_md(state))
+        self.report({"INFO"}, f"Saved {path}")
+        return {"FINISHED"}
+
+
+class CLAUDE_OT_recipe_replay(bpy.types.Operator):
+    bl_idname = "claude.recipe_replay"
+    bl_label = "Replay recipe"
+    bl_description = "Rebuild a scene from a recipe file without calling Claude (zero tokens)"
+
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+    filter_glob: bpy.props.StringProperty(default="*.json", options={"HIDDEN"})
+    allow_risky: bpy.props.BoolProperty(name="Allow Python and file ops",
+                                        description="Run py, open/save, import/export and render ops in the recipe. "
+                                                    "Only for recipes you trust")
+    stage: bpy.props.IntProperty(options={"HIDDEN", "SKIP_SAVE"})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def draw(self, context):
+        from . import recipes
+        try:
+            r = recipes.load(self.filepath)
+            self.layout.label(text=r.get("title", "")[:60])
+            self.layout.label(text=recipes.describe(r))
+        except Exception as e:
+            self.layout.label(text=str(e), icon="ERROR")
+        self.layout.prop(self, "allow_risky")
+
+    def execute(self, context):
+        from . import recipes
+        if self.stage == 0:  # back from the file browser: confirm first
+            self.stage = 1
+            return context.window_manager.invoke_props_dialog(self, width=360)
+        try:
+            msg = recipes.replay(recipes.load(self.filepath), self.allow_risky)
+        except Exception as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        _push("info", msg)
+        return {"FINISHED"}
+
+
+class CLAUDE_MT_templates(bpy.types.Menu):
+    bl_idname = "CLAUDE_MT_templates"
+    bl_label = "Templates"
+
+    def draw(self, context):
+        for i, t in visible_templates():
+            self.layout.operator("claude.chat_template", text=t["label"], icon=t.get("icon", "NONE")).index = i
+        self.layout.separator()
+        self.layout.operator("claude.recipe_export", icon="EXPORT")
+        self.layout.operator("claude.recipe_replay", icon="FILE_REFRESH")
+
+
 _MODEL_EXT = (".glb", ".gltf", ".fbx", ".obj", ".stl", ".ply", ".usd", ".usdz", ".abc")
 
 
@@ -1044,7 +1229,10 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         with _lock:
             hist = list(state["history"][-60:])
         if not hist:
-            box.label(text="Ask for anything, e.g. 'add a wooden table'", icon="INFO")
+            box.label(text="Ask for anything, or start from one of these:", icon="INFO")
+            grid = box.grid_flow(columns=2, even_columns=True, align=True)
+            for i, t in visible_templates(empty_only=True)[:6]:
+                grid.operator("claude.chat_template", text=t["label"], icon=t.get("icon", "NONE")).index = i
         # Panels don't auto-scroll: show only the newest lines that fit, so the latest reply is always visible.
         lines = []
         for role, text in hist:
@@ -1092,6 +1280,7 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         row.operator("claude.chat_attach_file", text="", icon="FILE_IMAGE")
         row.operator("claude.chat_paste", text="", icon="PASTEDOWN")
         row.operator("claude.inbox_import", text="", icon="IMPORT")
+        row.menu("CLAUDE_MT_templates", text="", icon="PRESET")
         row.operator("claude.chat_copy", text="", icon="COPYDOWN")
         row.prop(wm, "claude_chat_model", text="")
         row.prop(wm, "claude_chat_effort", text="")
@@ -1223,7 +1412,8 @@ def _redraw():
 
 classes = (CLAUDE_OT_chat_send, CLAUDE_OT_chat_stop, CLAUDE_OT_chat_new, CLAUDE_OT_chat_delete, CLAUDE_OT_chat_copy,
            CLAUDE_OT_attach, CLAUDE_OT_attach_file, CLAUDE_OT_paste, CLAUDE_OT_attach_clear, CLAUDE_OT_chat_revert,
-           CLAUDE_OT_select_changed, CLAUDE_OT_chat_handoff, CLAUDE_OT_inbox, CLAUDE_PT_chat)
+           CLAUDE_OT_select_changed, CLAUDE_OT_chat_handoff, CLAUDE_OT_inbox, CLAUDE_OT_template, CLAUDE_OT_recipe_export, CLAUDE_OT_recipe_replay, CLAUDE_MT_templates,
+           CLAUDE_PT_chat)
 
 _keymaps = []
 

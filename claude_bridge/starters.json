@@ -1,0 +1,23 @@
+[
+  {"label": "Build a small room", "icon": "HOME", "when": "empty",
+   "prompt": "Build a small cozy living room: floor, two walls, a sofa, a coffee table, a rug, a floor lamp and a plant. Real sizes, textured materials, warm lighting and a camera."},
+  {"label": "Product shot", "icon": "OUTLINER_OB_CAMERA", "when": "empty",
+   "prompt": "Make a clean studio product shot of a ceramic coffee mug on a seamless backdrop, with soft three-point lighting and a 85 mm camera."},
+  {"label": "Low-poly landscape", "icon": "WORLD", "when": "empty",
+   "prompt": "Create a low-poly landscape: rolling ground, a few trees and rocks, a small cabin, and a sunset sky."},
+  {"label": "Try a demo scene (no tokens)", "icon": "PLAY", "when": "empty", "recipe": "reading_nook"},
+  {"label": "Critique my scene", "icon": "VIEWZOOM", "when": "any", "model": "sonnet",
+   "prompt": "Look at the scene (one multi-view look and a check) and list the 3 changes that would improve it most. Don't change anything yet."},
+  {"label": "Light this", "icon": "LIGHT", "when": "any",
+   "prompt": "Light the scene well for its content: set the world, add key/fill/rim lights as needed, and verify with one look."},
+  {"label": "Frame a camera", "icon": "VIEW_CAMERA", "when": "any",
+   "prompt": "Add or move the scene camera for a flattering shot of {target}, check nothing is cut off, and show me."},
+  {"label": "Tidy up", "icon": "OUTLINER", "when": "any", "model": "sonnet",
+   "prompt": "Tidy the scene without changing how it looks: meaningful names, one collection per asset, parent loose parts, remove unused data."},
+  {"label": "Make 3 variations", "icon": "DUPLICATE", "when": "selection",
+   "prompt": "Make 3 variations of {sel} next to it (different proportions, materials or details), each in its own collection."},
+  {"label": "Polish the render", "icon": "RENDER_STILL", "when": "any",
+   "prompt": "Up to 3 rounds: render a quick preview you can see (render{preview:true,look:true,max:384}), fix the single biggest visual flaw, repeat."},
+  {"label": "Game-ready check", "icon": "CHECKMARK", "when": "any", "model": "sonnet",
+   "prompt": "Run check{only:['game']} on {target}, explain the problems briefly and fix what can be fixed safely."}
+]

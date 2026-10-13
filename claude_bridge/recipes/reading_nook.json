@@ -1,0 +1,64 @@
+{
+ "format": "claude-bridge-recipe",
+ "version": 1,
+ "title": "Cozy reading nook (demo)",
+ "prompts": ["Build a cozy reading nook: armchair, side table, lamp, bookshelf."],
+ "batches": [
+  [
+   {"op": "world", "hdri": "interior", "strength": 0.35},
+   {"op": "add", "type": "plane", "name": "Floor", "dims": [4, 4, 0], "col": "Room", "mat": {"name": "Oak", "color": "#8a5a34", "rough": 0.5}},
+   {"op": "tex", "obj": "Floor", "kind": "wood", "scale": 2.5},
+   {"op": "add", "type": "cube", "name": "Wall_Back", "dims": [4, 0.1, 2.6], "loc": [0, 2.05, 1.3], "col": "Room", "mat": {"name": "Plaster", "color": "#e8e0d4", "rough": 0.9}},
+   {"op": "add", "type": "cube", "name": "Wall_Left", "dims": [0.1, 4, 2.6], "loc": [-2.05, 0, 1.3], "col": "Room", "mat": "Plaster"},
+   {"op": "tex", "mat": "Plaster", "kind": "concrete", "color1": "#ebe3d6", "color2": "#ddd3c4", "scale": 3, "bump": 0.05},
+   {"op": "add", "type": "cube", "name": "Rug", "dims": [2.2, 1.6, 0.012], "loc": [-0.3, 0.5, 0.006], "col": "Room", "mat": {"name": "Wool", "color": "#7a3b2e", "rough": 1}},
+   {"op": "tex", "obj": "Rug", "kind": "fabric", "color1": "#86412f", "color2": "#5e2b20", "scale": 1}
+  ],
+  [
+   {"op": "add", "type": "cube", "name": "Chair_Seat", "dims": [0.94, 0.75, 0.2], "loc": [-1, 0.9, 0.36], "col": "Armchair", "mat": {"name": "Teal_Fabric", "color": "#2f6b6a", "rough": 0.95}},
+   {"op": "add", "type": "cube", "name": "Chair_Back", "dims": [0.8, 0.18, 0.6], "loc": [-1, 1.2, 0.72], "rot": [-8, 0, 0], "col": "Armchair", "mat": "Teal_Fabric"},
+   {"op": "add", "type": "cube", "name": "Chair_Arm_L", "dims": [0.14, 0.75, 0.43], "loc": [-1.47, 0.9, 0.465], "col": "Armchair", "mat": "Teal_Fabric"},
+   {"op": "dup", "obj": "Chair_Arm_L", "by": [0.94, 0, 0], "name": "Chair_Arm_R"},
+   {"op": "add", "type": "cube", "name": "Chair_Cushion", "dims": [0.7, 0.66, 0.12], "loc": [-1, 0.86, 0.51], "col": "Armchair", "mat": {"name": "Cream", "color": "#e9dcc3", "rough": 0.9}},
+   {"op": "mod", "obj": ["Chair_Seat", "Chair_Back", "Chair_Arm_L", "Chair_Arm_R"], "type": "bevel", "props": {"width": 0.04, "segments": 4}},
+   {"op": "mod", "obj": "Chair_Cushion", "type": "subsurf", "props": {"levels": 2}},
+   {"op": "set", "obj": "Chair_Cushion", "smooth": true},
+   {"op": "tex", "mat": "Teal_Fabric", "kind": "fabric", "color1": "#2f6b6a", "color2": "#245453", "scale": 1.2},
+   {"op": "add", "type": "cylinder", "name": "Chair_Leg_1", "dims": [0.05, 0.05, 0.25], "loc": [-1.45, 0.58, 0.125], "col": "Armchair", "mat": {"name": "Walnut", "color": "#4a2c1a", "rough": 0.45}},
+   {"op": "dup", "obj": "Chair_Leg_1", "by": [0.9, 0, 0], "name": "Chair_Leg_2"},
+   {"op": "dup", "obj": "Chair_Leg_1", "by": [0, 0.64, 0], "name": "Chair_Leg_3"},
+   {"op": "dup", "obj": "Chair_Leg_1", "by": [0.9, 0.64, 0], "name": "Chair_Leg_4"},
+   {"op": "tex", "mat": "Walnut", "kind": "wood", "color1": "#5a3520", "color2": "#3a2213", "scale": 6}
+  ],
+  [
+   {"op": "curve", "name": "Side_Table", "lathe": [[0, 0], [0.18, 0], [0.18, 0.02], [0.03, 0.04], [0.025, 0.5], [0.04, 0.53], [0.26, 0.54], [0.26, 0.57], [0, 0.57]], "loc": [0.0, 1.35, 0], "mat": "Walnut"},
+   {"op": "col", "name": "Side_Table", "obj": "Side_Table"},
+   {"op": "curve", "name": "Mug", "lathe": [[0, 0], [0.04, 0], [0.042, 0.01], [0.045, 0.1], [0.04, 0.1], [0.038, 0.012], [0, 0.012]], "loc": [0.08, 1.3, 0.57], "mat": {"name": "Glaze", "color": "#c8553d", "rough": 0.25}},
+   {"op": "place", "obj": "Mug", "on": "Side_Table"},
+   {"op": "curve", "name": "Lamp_Pole", "lathe": [[0, 0], [0.16, 0], [0.16, 0.02], [0.015, 0.04], [0.012, 1.45], [0, 1.45]], "loc": [-1.75, 1.7, 0], "mat": {"name": "Brass", "color": "#c9a24a", "metal": 1, "rough": 0.3}},
+   {"op": "curve", "name": "Lamp_Shade", "lathe": [[0.12, 0.25], [0.2, 0], [0.198, 0], [0.118, 0.25]], "loc": [-1.75, 1.7, 1.3], "mat": {"name": "Linen", "color": "#f3e6c8", "rough": 0.9, "emit": "#ffd59a", "emit_strength": 0.6}},
+   {"op": "add", "type": "point", "name": "Lamp_Light", "loc": [-1.75, 1.7, 1.38], "energy": 90, "color": "#ffd8a8"},
+   {"op": "col", "name": "Floor_Lamp", "obj": ["Lamp_Pole", "Lamp_Shade", "Lamp_Light"]}
+  ],
+  [
+   {"op": "add", "type": "cube", "name": "Shelf_Body", "dims": [1.0, 0.32, 1.1], "loc": [1.1, 1.82, 0.55], "col": "Bookshelf", "mat": "Walnut"},
+   {"op": "mod", "obj": "Shelf_Body", "type": "bevel", "props": {"width": 0.008, "segments": 2}},
+   {"op": "add", "type": "cube", "name": "Shelf_Cut_1", "dims": [0.92, 0.3, 0.46], "loc": [1.1, 1.7, 0.3], "col": "Bookshelf"},
+   {"op": "dup", "obj": "Shelf_Cut_1", "by": [0, 0, 0.52], "name": "Shelf_Cut_2"},
+   {"op": "mod", "obj": "Shelf_Body", "type": "bool", "name": "Cut1", "props": {"object": "Shelf_Cut_1", "operation": "DIFFERENCE"}},
+   {"op": "mod", "obj": "Shelf_Body", "type": "bool", "name": "Cut2", "props": {"object": "Shelf_Cut_2", "operation": "DIFFERENCE"}},
+   {"op": "set", "obj": ["Shelf_Cut_1", "Shelf_Cut_2"], "hide": true},
+   {"op": "add", "type": "cube", "name": "Book_1", "dims": [0.04, 0.22, 0.3], "loc": [0.72, 1.76, 0.22], "col": "Bookshelf", "mat": {"name": "Book_Red", "color": "#8e2b2b", "rough": 0.6}},
+   {"op": "dup", "obj": "Book_1", "n": 5, "by": [0.05, 0, 0], "name": "Book_R"},
+   {"op": "add", "type": "cube", "name": "Book_6", "dims": [0.045, 0.22, 0.26], "loc": [1.2, 1.76, 0.2], "col": "Bookshelf", "mat": {"name": "Book_Blue", "color": "#2b4a8e", "rough": 0.6}},
+   {"op": "dup", "obj": "Book_6", "n": 4, "by": [0.055, 0, 0], "name": "Book_B"},
+   {"op": "add", "type": "cube", "name": "Book_11", "dims": [0.04, 0.22, 0.32], "loc": [0.8, 1.76, 0.75], "col": "Bookshelf", "mat": {"name": "Book_Green", "color": "#3d6b3a", "rough": 0.6}},
+   {"op": "dup", "obj": "Book_11", "n": 6, "by": [0.048, 0, 0], "name": "Book_G"}
+  ],
+  [
+   {"op": "add", "type": "area", "name": "Window_Light", "loc": [1.6, -1.8, 2.2], "energy": 260, "color": "#cfe0ff", "args": {"size": 1.5}},
+   {"op": "aim", "obj": "Window_Light", "at": [-0.6, 1, 0.6]},
+   {"op": "cam", "name": "Camera", "loc": [1.75, -1.85, 1.35], "at": [-0.4, 1.1, 0.6], "lens": 24}
+  ]
+ ]
+}

@@ -335,6 +335,53 @@ def t_inbox():
 
 
 @test
+def t_templates_recipes_teach():
+    from claude_bridge import ops, recipes, teach
+    ts = chat.templates()
+    labels = [t["label"] for t in ts]
+    assert "Critique my scene" in labels and "Try a demo scene (no tokens)" in labels, labels
+    ops.op_new({})
+    ops.run_batch([{"op": "add", "type": "cube", "name": "Chair"}, {"op": "select", "obj": "Chair"}])
+    assert chat._fill("Make 3 variations of {sel}") == "Make 3 variations of Chair"
+    # The bundled demo builds cleanly from an empty scene, with nothing floating or intersecting badly
+    ops.op_new({})
+    msg = recipes.replay_bundled("reading_nook")
+    assert "zero tokens" in msg, msg
+    for n in ("Floor", "Chair_Seat", "Side_Table", "Mug", "Lamp_Shade", "Shelf_Body", "Book_G.006", "Camera"):
+        assert n in bpy.data.objects, n
+    res, ok = ops.run_batch([{"op": "check", "only": ["floating", "light", "cam"]}])
+    assert ok and res[0].startswith("check ok"), res
+    # Recipes from a chat: only successful, non-read-only batches
+    chat.new_chat()
+    chat._push("user", "make a box")
+    chat.handle_event({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": "t1", "name": "mcp__blender-bridge__bl", "input": {"ops": [{"op": "scene"}]}},
+        {"type": "tool_use", "id": "t2", "name": "mcp__blender-bridge__bl", "input": {"ops": [{"op": "add", "name": "Bx"}]}},
+        {"type": "tool_use", "id": "t3", "name": "mcp__blender-bridge__bl", "input": {"ops": [{"op": "set", "obj": "Zz"}]}}]}})
+    chat.handle_event({"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "t3", "is_error": True, "content": "0:set ERR no object"}]}})
+    r = recipes.from_chat(chat.state)
+    assert r["batches"] == [[{"op": "add", "name": "Bx"}]] and r["prompts"] == ["make a box"], r
+    p = recipes.save(r, os.path.join(tempfile.mkdtemp(), "x"))
+    assert recipes.load(p)["title"] == "make a box" and recipes.describe(r) == "1 batches, 1 ops"
+    try:
+        recipes.replay({"batches": [[{"op": "py", "code": "out=1"}]], "format": "claude-bridge-recipe"})
+        raise AssertionError("py in a recipe must need explicit permission")
+    except ValueError as e:
+        assert "py" in str(e)
+    # Saved chats keep their batches
+    chat.save()
+    cid = chat.state["chat_id"]
+    chat.new_chat()
+    chat.load(cid)
+    assert len(chat.state["batches"]) == 3
+    # Teach-mode hints are local
+    h = teach.hints({"name": "mcp__blender-bridge__bl", "input": {"ops": [
+        {"op": "add", "type": "cube"}, {"op": "mod", "type": "bevel"}, {"op": "add", "type": "cube"}]}})
+    assert h == "Add ▸ Mesh ▸ Cube (Shift+A) · Modifiers ▸ Add ▸ Generate ▸ Bevel (or Ctrl+B in Edit Mode)", h
+
+
+@test
 def t_missing_cli():
     chat.new_chat()
     orig = chat.find_claude
