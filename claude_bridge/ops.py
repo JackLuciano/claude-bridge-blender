@@ -253,7 +253,34 @@ def _apply_xform(o, a):
     if "scale" in a:
         o.scale = v3(a, "scale")
     if "dims" in a:
-        o.dimensions = v3(a, "dims")
+        # Not o.dimensions =: Blender ignores the whole vector when one axis is 0 (a plane's height).
+        want = v3(a, "dims")
+        cur = o.dimensions
+        o.scale = [o.scale[i] * want[i] / cur[i] if cur[i] > 1e-9 and want[i] > 1e-9 else o.scale[i] for i in range(3)]
+        if a.get("bake", True):
+            _bake_scale(o)
+
+
+def _bake_scale(o):
+    """Move the object's scale into its mesh so sizes are real metres: bevel widths, solidify
+    thickness and procedural textures (Object coordinates) then behave the same on every object.
+    Skipped for shared meshes and objects with children, which a bake would distort."""
+    if o.type != "MESH" or o.data.users != 1 or o.children:
+        return False
+    s = o.scale.copy()
+    # A flat axis (plane with dims z=0) gets scale 0 from Blender; its extent is 0 anyway, so treat it as 1.
+    ext = [max(c[i] for c in o.bound_box) - min(c[i] for c in o.bound_box) for i in range(3)]
+    s = mathutils.Vector([1.0 if abs(s[i]) < 1e-9 and ext[i] < 1e-9 else s[i] for i in range(3)])
+    if any(abs(x) < 1e-9 for x in s):
+        return False  # a real zero scale: nothing sensible to bake
+    if all(abs(x - 1) < 1e-6 for x in s):
+        o.scale = s
+        return False
+    o.data.transform(mathutils.Matrix.Diagonal((*s, 1)))
+    o.data.update()
+    o.scale = (1, 1, 1)
+    bpy.context.view_layer.update()  # refresh the cached bounds that o.dimensions reads
+    return True
 
 
 def _light_props(o, a):
@@ -531,12 +558,13 @@ def op_tex(a):
     if kind not in _TEX_KINDS:
         raise ValueError(f"kind must be one of {','.join(_TEX_KINDS)}")
     grain = "X"  # wood grain runs along the object's longest side (a floor is flat, a table leg is tall)
+    tex_obj = None
     if a.get("mat"):
         m = bpy.data.materials.get(a["mat"])
         if not m:
             raise ValueError(f"no material '{a['mat']}'")
     else:
-        o = obj(a.get("obj"))
+        o = tex_obj = obj(a.get("obj"))
         d = o.dimensions
         grain = "XYZ"[max(range(3), key=lambda i: d[i])]
         m = o.active_material
@@ -566,6 +594,10 @@ def op_tex(a):
     coord = node("ShaderNodeTexCoord", 1100, 0)
     mapping = node("ShaderNodeMapping", 900, 0)
     nt.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
+    if tex_obj is not None and m.users <= 1:
+        # Object coordinates ignore object scale: compensate so the pattern has the same size in metres
+        # on a scaled object (one that couldn't be baked, e.g. an import with shared mesh data).
+        mapping.inputs["Scale"].default_value = tuple(abs(x) or 1 for x in tex_obj.scale)
     ramp = node("ShaderNodeValToRGB", 350, 0)
     ramp.color_ramp.elements[0].color = c1
     ramp.color_ramp.elements[1].color = c2
