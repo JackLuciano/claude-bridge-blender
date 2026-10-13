@@ -232,6 +232,36 @@ def t_export_import_render():
     assert ok and os.path.exists(png), out
 
 
+@test
+def t_batch_safety():
+    fresh()
+    # Edit Mode: add must not put geometry into the edited mesh
+    ok, out = run({"op": "add", "type": "cube", "name": "User"})
+    bpy.ops.object.mode_set(mode="EDIT")
+    ok, out = run({"op": "add", "type": "cube", "name": "New", "loc": [3, 0, 0]})
+    assert ok and "mode edit_mesh>object" in out, out
+    assert len(bpy.data.objects["User"].data.vertices) == 8 and "New" in bpy.data.objects, out
+    # Same name again updates instead of creating Box.001; another type is an error
+    ok, out = run({"op": "add", "type": "cube", "name": "New", "loc": [5, 0, 0]})
+    assert ok and "(existed)" in out and "New.001" not in bpy.data.objects, out
+    assert round(bpy.data.objects["New"].location.x, 3) == 5
+    ok, out = run({"op": "add", "type": "sun", "name": "New"})
+    assert not ok and "already exists" in out, out
+    ok, out = run({"op": "set", "obj": "New", "name": "User"})
+    assert not ok and "taken" in out, out
+    # dup copies children by default
+    ok, out = run({"op": "add", "type": "cube", "name": "Kid", "loc": [0, 0, 2]},
+                  {"op": "set", "obj": "Kid", "parent": "User"},
+                  {"op": "dup", "obj": "User", "by": [0, 3, 0], "name": "User2"})
+    assert ok and len(bpy.data.objects["User2"].children) == 1, out
+    # Batch kinds and undo labels
+    assert ops.batch_kind([{"op": "scene"}, {"op": "get", "path": "scene.frame_current"}]) == "ro"
+    assert ops.batch_kind([{"op": "undo"}]) == "history"
+    assert ops.batch_kind([{"op": "scene"}, {"op": "add"}]) == "write"
+    lbl = ops.undo_label([{"op": "add", "name": "Sofa"}, {"op": "mat"}, {"op": "mod"}, {"op": "mod"}, {"op": "tex"}])
+    assert lbl == "Claude: add Sofa, mat, mod +2", lbl
+
+
 def main():
     failed = 0
     for fn in TESTS:

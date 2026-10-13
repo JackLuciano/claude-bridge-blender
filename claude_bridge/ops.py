@@ -14,11 +14,17 @@ import bpy
 import mathutils
 
 OPS = {}
+READ_ONLY = set()   # ops that never change data: no undo step, no mode switch
+HISTORY = set()     # ops that move through history themselves (undo/redo/open): no undo step
 
 
-def op(name):
+def op(name, ro=False, history=False):
     def deco(fn):
         OPS[name] = fn
+        if ro:
+            READ_ONLY.add(name)
+        if history:
+            HISTORY.add(name)
         return fn
     return deco
 
@@ -158,7 +164,7 @@ def summary(o):
 
 # ---------------------------------------------------------------- scene / info
 
-@op("scene")
+@op("scene", ro=True)
 def op_scene(a):
     """Compact list of objects. a: filter (substring), type."""
     f, t = a.get("filter"), a.get("type")
@@ -174,7 +180,7 @@ def op_scene(a):
     return "\n".join(lines)
 
 
-@op("info")
+@op("info", ro=True)
 def op_info(a):
     o = obj(a.get("obj"))
     lines = [summary(o), f"scale{_vec(o.scale)}"]
@@ -192,7 +198,7 @@ def op_info(a):
     return "\n".join(lines)
 
 
-@op("get")
+@op("get", ro=True)
 def op_get(a):
     """Read any data path: scene.render.fps, objects.Cube.location, Cube.data.energy."""
     cur, parts = resolve_path(a["path"])
@@ -275,6 +281,32 @@ def _set_attr(o, path, v):
     setattr(holder, parts[-1], v)
 
 
+_ADD_TYPES = {"empty": "EMPTY", "text": "FONT", "curve": "CURVE", "camera": "CAMERA",
+              "point": "LIGHT", "sun": "LIGHT", "spot": "LIGHT", "area": "LIGHT"}
+
+
+def _add_material(o, a):
+    if "mat" in a:
+        m = a["mat"]
+        if isinstance(m, (list, tuple)) or (isinstance(m, str) and m.startswith("#")):
+            m = {"color": m}  # "mat": "#ff0000" means a color, not a material name
+        elif isinstance(m, str):
+            m = {"name": m}
+        if "color" in a and "color" not in m:
+            m = {**m, "color": a["color"]}
+        op_mat({"obj": o.name, **m})
+    elif "color" in a and o.type != "LIGHT" and hasattr(o.data, "materials"):
+        # Shorthand: a color on a non-light becomes a material, instead of being silently ignored.
+        op_mat({"obj": o.name, "color": a["color"]})
+
+
+def _check_free(name, o=None):
+    """Blender silently renames on a clash ('Box.001'), and later ops would then hit the wrong object."""
+    other = bpy.data.objects.get(name)
+    if other is not None and other != o:
+        raise ValueError(f"name '{name}' is taken; pick another name or edit the existing object")
+
+
 @op("add")
 def op_add(a):
     """a: type (cube|sphere|ico|cylinder|cone|plane|circle|torus|monkey|grid|empty|text|curve|camera|
@@ -282,6 +314,19 @@ def op_add(a):
     t = a.get("type", "cube")
     extra = dict(a.get("args", {}))
     loc = v3(a, "loc") if "loc" in a else (0, 0, 0)
+    existing = bpy.data.objects.get(a["name"]) if a.get("name") else None
+    if existing is not None:
+        # Same name again (e.g. a retried batch): update it instead of making "Box.001".
+        want = _ADD_TYPES.get(t, "MESH")
+        if existing.type != want:
+            raise ValueError(f"'{a['name']}' already exists as a {existing.type.lower()}; pick another name")
+        if bpy.context.scene.objects.get(existing.name) is None:
+            bpy.context.scene.collection.objects.link(existing)
+        _apply_xform(existing, a)
+        _light_props(existing, a)
+        if "mat" in a or "color" in a:
+            _add_material(existing, a)
+        return "= " + summary(existing) + " (existed)"
     if t in ("point", "sun", "spot", "area"):
         bpy.ops.object.light_add(type=t.upper(), location=loc)
     else:
@@ -301,18 +346,7 @@ def op_add(a):
     if t == "text" and a.get("body"):
         o.data.body = a["body"]
     _light_props(o, a)
-    if "mat" in a:
-        m = a["mat"]
-        if isinstance(m, (list, tuple)) or (isinstance(m, str) and m.startswith("#")):
-            m = {"color": m}  # "mat": "#ff0000" means a color, not a material name
-        elif isinstance(m, str):
-            m = {"name": m}
-        if "color" in a and "color" not in m:
-            m = {**m, "color": a["color"]}
-        op_mat({"obj": o.name, **m})
-    elif "color" in a and o.type != "LIGHT" and hasattr(o.data, "materials"):
-        # Shorthand: a color on a non-light becomes a material, instead of being silently ignored.
-        op_mat({"obj": o.name, "color": a["color"]})
+    _add_material(o, a)
     if a.get("smooth") and o.type == "MESH":
         for p in o.data.polygons:
             p.use_smooth = True
@@ -340,6 +374,7 @@ def op_set(a):
         for k, v in a.get("props", {}).items():
             _set_attr(o, k, v)
         if "name" in a:
+            _check_free(a["name"], o)
             o.name = a["name"]
         out.append(summary(o))
     return "\n".join(out)
@@ -374,21 +409,37 @@ def op_del(a):
 
 @op("dup")
 def op_dup(a):
-    """a: obj, n (count), by (offset per copy), linked (share mesh), name."""
+    """a: obj, n (count), by (offset per copy), linked (share mesh), name, tree (copy children too, default true)."""
     src = obj(a.get("obj"))
     off = mathutils.Vector(a.get("by", (0, 0, 0)))
+    n = int(a.get("n", 1))
+    names = [f"{a['name']}{'' if n == 1 else '.' + str(i + 1).zfill(3)}" for i in range(n)] if a.get("name") else [None] * n
+    for nm in names:
+        if nm:
+            _check_free(nm)
     out = []
-    for i in range(int(a.get("n", 1))):
-        c = src.copy()
-        if src.data and not a.get("linked"):
-            c.data = src.data.copy()
-        for col in src.users_collection:
-            col.objects.link(c)
+    for i, nm in enumerate(names):
+        c = _copy_tree(src, bool(a.get("linked")), bool(a.get("tree", True)))
         c.location = src.location + off * (i + 1)
-        if a.get("name"):
-            c.name = f"{a['name']}{'' if a.get('n', 1) == 1 else '.' + str(i + 1).zfill(3)}"
+        if nm:
+            c.name = nm
         out.append(c.name)
     return "+ " + ",".join(out)
+
+
+def _copy_tree(src, linked, tree, parent=None):
+    """Copy an object (and, with tree, its children, keeping their parent-relative placement)."""
+    c = src.copy()
+    if src.data and not linked:
+        c.data = src.data.copy()
+    for col in src.users_collection:
+        col.objects.link(c)
+    if parent is not None:
+        c.parent = parent
+    if tree:
+        for ch in src.children:
+            _copy_tree(ch, linked, True, c)
+    return c
 
 
 @op("select")
@@ -670,7 +721,7 @@ def op_cam(a):
 _VIEWS = {"front": "FRONT", "back": "BACK", "left": "LEFT", "right": "RIGHT", "top": "TOP", "bottom": "BOTTOM"}
 
 
-@op("view")
+@op("view", ro=True)
 def op_view(a):
     """Drive the user's viewport. a: preset (front|back|left|right|top|bottom|camera|persp|ortho),
     orbit [yaw,pitch] deg, zoom (factor, >1 = closer), frame ('sel'|'all'|obj name),
@@ -755,14 +806,14 @@ def op_py(a):
 
 # ---------------------------------------------------------------- files / render / history
 
-@op("undo")
+@op("undo", history=True)
 def op_undo(a):
     for _ in range(int(a.get("n", 1))):
         bpy.ops.ed.undo()
     return "undone"
 
 
-@op("redo")
+@op("redo", history=True)
 def op_redo(a):
     for _ in range(int(a.get("n", 1))):
         bpy.ops.ed.redo()
@@ -778,7 +829,7 @@ def op_save(a):
     return f"saved {bpy.data.filepath}"
 
 
-@op("open")
+@op("open", history=True)
 def op_open(a):
     bpy.ops.wm.open_mainfile(filepath=a["path"])
     return f"opened {a['path']}"
@@ -899,15 +950,64 @@ def look(a):
 
 # ---------------------------------------------------------------- batch runner
 
+def _normalize(a):
+    if isinstance(a, dict) and "op" not in a and len(a) == 1:
+        # Accept the {"add": {...}} shorthand some models produce.
+        (k, v), = a.items()
+        if k in OPS and isinstance(v, dict):
+            return {"op": k, **v}
+    return a if isinstance(a, dict) else {"op": None}
+
+
+def _ensure_object_mode():
+    """Ops assume Object Mode: in Edit Mode, `add` would put geometry inside the edited mesh.
+    Returns a note for the reply when the mode was switched."""
+    mode = bpy.context.mode
+    if mode == "OBJECT":
+        return None
+    try:
+        bpy.ops.object.mode_set(mode="OBJECT")
+    except RuntimeError:
+        win, area, region, _ = view3d()
+        with bpy.context.temp_override(window=win, area=area, region=region):
+            bpy.ops.object.mode_set(mode="OBJECT")
+    return f"mode {mode.lower()}>object"
+
+
+def batch_kind(batch):
+    """'ro' (nothing to undo), 'history' (undo/redo/open manage history) or 'write'."""
+    names = [_normalize(a).get("op") for a in batch]
+    if names and all(n in READ_ONLY for n in names):
+        return "ro"
+    if any(n in HISTORY for n in names):
+        return "history"
+    return "write"
+
+
+def undo_label(batch):
+    """Readable undo step name, e.g. 'Claude: add Sofa, mat, mod +5'."""
+    parts = []
+    for a in (_normalize(x) for x in batch):
+        if a.get("op") in READ_ONLY:
+            continue
+        p = a.get("op") or "?"
+        if a.get("op") in ("add", "cam") and a.get("name"):
+            p += " " + str(a["name"])
+        parts.append(p)
+    return "Claude: " + ", ".join(parts[:3]) + (f" +{len(parts) - 3}" if len(parts) > 3 else "")
+
+
 def run_batch(batch):
     results, ok = [], True
+    switched = False
     for i, a in enumerate(batch):
-        if "op" not in a and len(a) == 1:
-            # Accept the {"add": {...}} shorthand some models produce.
-            (k, v), = a.items()
-            if k in OPS and isinstance(v, dict):
-                a = {"op": k, **v}
+        a = _normalize(a)
         name = a.get("op")
+        if not switched and name in OPS and name not in READ_ONLY and name not in HISTORY:
+            switched = True
+            note = _ensure_object_mode()
+            if note:
+                results.append(note)
         fn = OPS.get(name)
         if not fn:
             results.append(f"{i}:ERR unknown op '{name}' (ops: {','.join(sorted(OPS))})")

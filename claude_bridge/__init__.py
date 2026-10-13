@@ -40,14 +40,21 @@ _jobs: "queue.Queue[tuple[dict, queue.Queue]]" = queue.Queue()
 
 def _handle_request(req: dict) -> dict:
     """Runs on the main thread. Executes a batch as one undo step."""
+    global PUSHES
     if "look" in req:
         return bridge_ops.look(req["look"] or {})
-    results, ok = bridge_ops.run_batch(req.get("ops", []))
-    try:
-        bpy.ops.ed.undo_push(message="Claude batch")
-    except Exception:
-        pass
+    batch = req.get("ops", [])
+    results, ok = bridge_ops.run_batch(batch)
+    if bridge_ops.batch_kind(batch) == "write":  # read-only calls must not wipe the user's redo
+        try:
+            bpy.ops.ed.undo_push(message=bridge_ops.undo_label(batch))
+        except Exception:
+            pass
+        PUSHES += 1
     return {"ok": ok, "text": "\n".join(results)}
+
+
+PUSHES = 0  # undo steps pushed by the bridge; the chat uses it to revert a whole turn
 
 
 JOB_TTL = 600  # seconds a client waits; jobs older than this are dropped instead of run late
