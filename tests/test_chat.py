@@ -284,6 +284,41 @@ def t_turn_ledger():
 
 
 @test
+def t_usage_and_handoff():
+    chat.new_chat()
+    chat.handle_event({"type": "result", "session_id": "s", "num_turns": 3, "duration_ms": 9200,
+                       "usage": {"input_tokens": 12, "cache_read_input_tokens": 13000, "cache_creation_input_tokens": 988,
+                                 "output_tokens": 1100},
+                       "modelUsage": {"claude-opus": {"contextWindow": 1000000}}})
+    assert chat.usage_line() == "ctx 14k/1M · last reply: 3 steps, 1.1k out, 9s", chat.usage_line()
+    chat.handle_event({"type": "result", "subtype": "error_max_turns", "is_error": True})
+    assert "say 'continue'" in chat.state["history"][-1][1]
+    chat._push("user", "build a desk")
+    seed = chat.handoff_prompt()
+    assert "The scene now:" in seed and "- build a desk" in seed
+    # The seed rides along with the next message, invisibly
+    chat.state["handoff"] = seed
+    sent = {}
+    orig_find, orig_thread = chat.find_claude, chat.threading.Thread
+
+    class T:
+        def __init__(self, target, args, daemon):
+            sent["msg"] = args[1]
+
+        def start(self):
+            pass
+    chat.find_claude, chat.threading.Thread = (lambda: "claude"), T
+    try:
+        chat.send("add a lamp", ctx=False)
+    finally:
+        chat.find_claude, chat.threading.Thread = orig_find, orig_thread
+        chat.state["busy"] = False
+    text = sent["msg"]["message"]["content"][-1]["text"]
+    assert text.startswith("Continuing an earlier chat") and text.endswith("add a lamp"), text
+    assert chat.state["history"][-1] == ("user", "add a lamp") and "handoff" not in chat.state
+
+
+@test
 def t_missing_cli():
     chat.new_chat()
     orig = chat.find_claude

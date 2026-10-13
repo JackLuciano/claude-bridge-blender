@@ -76,6 +76,7 @@ state = {
     "proc": None,
     "busy": False,
     "cost": 0.0,
+    "usage": None,       # figures from the last reply's result event
 }
 
 
@@ -135,7 +136,7 @@ def load(cid):
     with open(_chat_path(cid), encoding="utf-8") as f:
         c = json.load(f)
     with _lock:
-        state.update(chat_id=c["id"], session=c.get("session"), cost=c.get("cost", 0.0), attachments=[],
+        state.update(chat_id=c["id"], session=c.get("session"), cost=c.get("cost", 0.0), attachments=[], usage=None,
                      history=[tuple(x) for x in c.get("history", [])])
     return True
 
@@ -159,7 +160,7 @@ def stop():
 def new_chat():
     stop()
     with _lock:
-        state.update(chat_id=None, session=None, cost=0.0, history=[], attachments=[])
+        state.update(chat_id=None, session=None, cost=0.0, history=[], attachments=[], usage=None)
     turn.update(mark=None, before=None, after=None, changed=[], pushes=0)
 
 
@@ -506,7 +507,10 @@ def handle_event(ev):
     elif t == "result":
         state["session"] = ev.get("session_id", state["session"])
         state["cost"] += ev.get("total_cost_usd") or 0
-        if ev.get("is_error"):
+        state["usage"] = usage_from_result(ev)
+        if ev.get("subtype") == "error_max_turns":
+            _push("info", f"stopped after {MAX_TURNS} steps; say 'continue' to go on")
+        elif ev.get("is_error"):
             _push("error", classify_error(str(ev.get("result", "error"))[:300]))
         else:
             save()  # persist the session id for --resume
@@ -540,6 +544,44 @@ def _kill_tree(proc):
         proc.kill()
     except OSError:
         pass
+
+
+def usage_from_result(ev):
+    """Per-reply figures from the CLI's own result event (no credentials or local files involved)."""
+    u = ev.get("usage") or {}
+    ctx = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+    window = 0
+    for m in (ev.get("modelUsage") or {}).values():
+        if isinstance(m, dict):
+            window = max(window, int(m.get("contextWindow") or 0))
+    return {"ctx": ctx, "window": window, "out": int(u.get("output_tokens") or 0),
+            "calls": int(ev.get("num_turns") or 0), "secs": round((ev.get("duration_ms") or 0) / 1000)}
+
+
+def _k(n):
+    if n >= 1000000:
+        return f"{n / 1000000:g}M"
+    return f"{n / 1000:.1f}k" if n < 10000 else f"{n // 1000}k"
+
+
+def usage_line():
+    u = state.get("usage")
+    if not u:
+        return ""
+    ctx = _k(u["ctx"]) + (f"/{_k(u['window'])}" if u["window"] else "")
+    return f"ctx {ctx} · last reply: {u['calls']} steps, {_k(u['out'])} out, {u['secs']}s"
+
+
+LONG_CHAT = 120000  # context tokens above which the panel suggests a fresh chat
+
+
+def handoff_prompt():
+    """Seed for a fresh chat: the scene as it is now plus the user's last requests (no LLM summary needed)."""
+    from . import ops
+    scene = ops.op_scene({"limit": 40})
+    asks = [t for r, t in state["history"] if r == "user"][-4:]
+    return ("Continuing an earlier chat. The scene now:\n" + scene + "\nWhat I asked before:\n- " + "\n- ".join(asks)
+            + "\nNext: ")
 
 
 def _worker(cmd, message):
@@ -697,6 +739,9 @@ def send(prompt, model="opus", effort=None, ctx=True):
         _turn_start()
     except Exception:
         line = None
+    seed = state.pop("handoff", None)
+    if seed:
+        line = (line + "\n" if line else "") + seed
     state["busy"] = True
     cmd = build_cmd(claude, state["session"], model, effort, custom_instructions())
     threading.Thread(target=_worker, args=(cmd, build_message(prompt, images, line)), daemon=True).start()
@@ -867,6 +912,22 @@ class CLAUDE_OT_chat_revert(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class CLAUDE_OT_chat_handoff(bpy.types.Operator):
+    bl_idname = "claude.chat_handoff"
+    bl_label = "Continue in a fresh chat"
+    bl_description = ("Start a new chat that knows the current scene and your recent requests. "
+                      "Long chats re-send their whole history with every message")
+
+    def execute(self, context):
+        seed = handoff_prompt()
+        new_chat()
+        context.window_manager.claude_chat_list = "NEW"
+        state["handoff"] = seed
+        state["history"].append(("info", "Fresh chat: the current scene and your recent requests go along with "
+                                         "your next message."))
+        return {"FINISHED"}
+
+
 class CLAUDE_OT_select_changed(bpy.types.Operator):
     bl_idname = "claude.chat_select_changed"
     bl_label = "Select changed"
@@ -965,6 +1026,14 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         row.operator("claude.chat_copy", text="", icon="COPYDOWN")
         row.prop(wm, "claude_chat_model", text="")
         row.prop(wm, "claude_chat_effort", text="")
+
+        u = state.get("usage")
+        if u:
+            row = layout.row(align=True)
+            long_chat = u["ctx"] > LONG_CHAT
+            row.alert = long_chat
+            row.label(text=usage_line(), icon="ERROR" if long_chat else "LINENUMBERS_ON")
+            row.operator("claude.chat_handoff", text="", icon="DUPLICATE")
 
 
 _suppress_send = [False]  # set while code (not the user) fills the input field
@@ -1085,7 +1154,7 @@ def _redraw():
 
 classes = (CLAUDE_OT_chat_send, CLAUDE_OT_chat_stop, CLAUDE_OT_chat_new, CLAUDE_OT_chat_delete, CLAUDE_OT_chat_copy,
            CLAUDE_OT_attach, CLAUDE_OT_attach_file, CLAUDE_OT_paste, CLAUDE_OT_attach_clear, CLAUDE_OT_chat_revert,
-           CLAUDE_OT_select_changed, CLAUDE_PT_chat)
+           CLAUDE_OT_select_changed, CLAUDE_OT_chat_handoff, CLAUDE_PT_chat)
 
 _keymaps = []
 
