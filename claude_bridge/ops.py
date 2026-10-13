@@ -689,6 +689,94 @@ def op_tex(a):
     return f"tex {kind} on {m.name}"
 
 
+_HDRIS = ("city", "courtyard", "forest", "interior", "night", "studio", "sunrise", "sunset")
+
+
+def _world_tree():
+    sc = bpy.context.scene
+    if sc.world is None:
+        sc.world = bpy.data.worlds.new("World")
+    w = sc.world
+    w.use_nodes = True
+    nt = w.node_tree
+    out = next((n for n in nt.nodes if n.type == "OUTPUT_WORLD"), None) or nt.nodes.new("ShaderNodeOutputWorld")
+    bg = next((n for n in nt.nodes if n.type == "BACKGROUND"), None)
+    if bg is None:
+        bg = nt.nodes.new("ShaderNodeBackground")
+        bg.location = (out.location.x - 250, out.location.y)
+    return w, nt, out, bg
+
+
+@op("world")
+def op_world(a):
+    """Scene background and lighting. a: color + strength | hdri (city|courtyard|forest|interior|night|studio|
+    sunrise|sunset or an image path) + rot (deg) + strength | sky:true (+ sun_elev, sun_rot deg, sun:true adds a
+    matching sun light) | bg (color the camera sees instead, keeping the lighting)."""
+    w, nt, out, bg = _world_tree()
+    for n in [n for n in nt.nodes if n.get("claude_world")]:
+        nt.nodes.remove(n)
+
+    def node(t, x, y=0):
+        n = nt.nodes.new(t)
+        n["claude_world"] = True
+        n.location = (bg.location.x - x, bg.location.y + y)
+        return n
+
+    nt.links.new(bg.outputs["Background"], out.inputs["Surface"])
+    desc = []
+    if "hdri" in a:
+        h = a["hdri"]
+        path = h if os.path.sep in h or "/" in h or "." in h else os.path.join(
+            bpy.utils.system_resource("DATAFILES", path="studiolights/world"), f"{h}.exr")
+        if not os.path.exists(path):
+            raise ValueError(f"hdri must be one of {','.join(_HDRIS)} or an existing image path")
+        env = node("ShaderNodeTexEnvironment", 300)
+        env.image = bpy.data.images.load(path, check_existing=True)
+        coord, mapping = node("ShaderNodeTexCoord", 700), node("ShaderNodeMapping", 500)
+        mapping.inputs["Rotation"].default_value[2] = math.radians(a.get("rot", 0))
+        nt.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
+        nt.links.new(mapping.outputs["Vector"], env.inputs["Vector"])
+        nt.links.new(env.outputs["Color"], bg.inputs["Color"])
+        desc.append(f"hdri {os.path.basename(path)}")
+    elif a.get("sky"):
+        sky = node("ShaderNodeTexSky", 300)
+        for t in ("NISHITA", "MULTIPLE_SCATTERING", "SINGLE_SCATTERING", "HOSEK_WILKIE"):
+            try:
+                sky.sky_type = t
+                break
+            except TypeError:
+                continue
+        elev, srot = math.radians(a.get("sun_elev", 35)), math.radians(a.get("sun_rot", 0))
+        for attr, v in (("sun_elevation", elev), ("sun_rotation", srot)):
+            if hasattr(sky, attr):
+                setattr(sky, attr, v)
+        nt.links.new(sky.outputs["Color"], bg.inputs["Color"])
+        desc.append(f"sky {sky.sky_type.lower()}")
+        if a.get("sun"):
+            op_add({"type": "sun", "name": "Sky_Sun"})  # updates it if it already exists
+            sun = bpy.data.objects["Sky_Sun"]
+            sun.rotation_euler = (math.pi / 2 - elev, 0, srot + math.pi / 2)
+            sun.data.energy = a.get("sun_energy", 4)
+            desc.append("sun light")
+    else:
+        if bg.inputs["Color"].is_linked:
+            nt.links.remove(bg.inputs["Color"].links[0])
+        bg.inputs["Color"].default_value = color(a.get("color", "#3a3a3a"))
+        desc.append("color")
+    bg.inputs["Strength"].default_value = float(a.get("strength", 1.0))
+    if "bg" in a:
+        # Camera rays see a flat color; everything else is still lit by the world above.
+        lp, mix, flat = node("ShaderNodeLightPath", 250, 250), node("ShaderNodeMixShader", -150), node("ShaderNodeBackground", 0, -200)
+        flat.inputs["Color"].default_value = color(a["bg"])
+        mix.location = (out.location.x - 120, out.location.y)
+        nt.links.new(lp.outputs["Is Camera Ray"], mix.inputs[0])
+        nt.links.new(bg.outputs["Background"], mix.inputs[1])
+        nt.links.new(flat.outputs["Background"], mix.inputs[2])
+        nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+        desc.append("bg")
+    return f"world {w.name}: {', '.join(desc)} strength {_r(bg.inputs['Strength'].default_value, 2)}"
+
+
 _MOD_ALIASES = {"bevel": "BEVEL", "subsurf": "SUBSURF", "subd": "SUBSURF", "array": "ARRAY", "mirror": "MIRROR",
                 "solidify": "SOLIDIFY", "bool": "BOOLEAN", "boolean": "BOOLEAN", "decimate": "DECIMATE",
                 "weld": "WELD", "wireframe": "WIREFRAME", "screw": "SCREW", "displace": "DISPLACE",

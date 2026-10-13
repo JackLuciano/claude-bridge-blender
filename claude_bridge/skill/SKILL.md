@@ -40,6 +40,8 @@ JPEG. Every op replies with one short line, so trust the replies and keep image 
 
 - Point/spot energy is in watts: lamp 50–150, room fill 300–800. Sun energy 2–5. Area 100–400.
 - Warm `#ffd8a8`, neutral `#ffffff`, cool `#cfe0ff`. Aim spots/areas with `aim{obj,at}`.
+- Set the world early, so `look` shows real lighting: interiors `world{hdri:"interior",strength:0.5}` plus area
+  lights; outdoors `world{sky:true,sun:true}`; product shots `world{hdri:"studio",bg:"#ffffff"}`.
 - Camera: `cam{loc,at,lens}`. Interior 18–28 mm from a corner at eye height (1.5–1.7 m); product 50–85 mm.
 - Check framing with `look{cam:true}`; if things are cut off, move the camera back or lower the lens.
 
