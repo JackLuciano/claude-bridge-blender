@@ -79,6 +79,23 @@ def client():
 
         r = rpc("bogus/method")
         check("unknown method", r.get("error", {}).get("code") == -32601, r)
+
+        # A web page can POST text/plain to localhost; the body must never run.
+        import socket
+        body = json.dumps({"ops": [{"op": "add", "type": "cube", "name": "Pwn"}]}) + "\n"
+        for raw in (f"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: text/plain\r\n\r\n{body}",
+                    "garbage line\n" + body,
+                    body):  # valid JSON but no token
+            with socket.create_connection(("127.0.0.1", PORT), timeout=5) as s:
+                s.sendall(raw.encode())
+                s.settimeout(3)
+                try:
+                    while s.recv(4096):
+                        pass
+                except OSError:
+                    pass
+        time.sleep(0.3)
+        check("http/garbage/no-token rejected", "Pwn" not in bpy.data.objects, list(bpy.data.objects.keys()))
     except Exception:
         state["errors"].append(traceback.format_exc())
     finally:

@@ -63,7 +63,18 @@ TOOLS = [
 ]
 
 
+def token():
+    """The per-launch secret the addon writes when its bridge starts (re-read: Blender may restart)."""
+    try:
+        import tempfile
+        with open(os.path.join(tempfile.gettempdir(), f"claude_bridge_{PORT}.token")) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 def blender(req: dict) -> dict:
+    req = {**req, "auth": token()}
     try:
         with socket.create_connection((HOST, PORT), timeout=5) as s:
             s.settimeout(600)
