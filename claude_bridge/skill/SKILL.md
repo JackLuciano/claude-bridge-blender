@@ -59,6 +59,12 @@ view. Use `shading:"material"` after adding materials so they see colours.
 - Any property: `prop{path:"scene.render.engine", value:"CYCLES"}`, read with `get{path}`.
 - `py{code}` only when no op fits; set `out` to return a value. Keep it short.
 
+## Seeing several angles
+
+`look{views:["cam","front","right","top"],max:512}` returns one grid image (tile order in the reply) and leaves the
+user's view alone. Prefer it over several single looks when checking proportions. `render{preview:true,look:true}`
+shows the real render engine's result without changing the user's render settings.
+
 ## Don'ts
 
 - Don't `look` after every batch, and don't use `max` above 512 unless the user needs detail.

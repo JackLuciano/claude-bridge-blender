@@ -1292,23 +1292,13 @@ def _jpeg(src, size, name):
 
 # ---------------------------------------------------------------- look (image feedback)
 
-def look(a):
-    """Capture the viewport (or camera via 'cam': true) downscaled to max px. Returns a file path."""
-    if any(k in a for k in ("preset", "orbit", "zoom", "frame", "shading", "dist", "at")):
-        op_view(a)
-    size = int(a.get("max", 512))
-    tmp = tempfile.gettempdir()
-    raw = os.path.join(tmp, "claude_look_raw.png")
-    out = os.path.join(tmp, "claude_look.jpg")
+def _capture(w, h, cam, raw):
+    """OpenGL render of the viewport (or camera) at w x h into raw: no UI chrome, splash or overlays."""
     win, area, region, space = view3d()
-    # OpenGL render of the viewport (or camera): no UI chrome, splash or overlays in the shot.
     sc = bpy.context.scene
     r = sc.render
     old = (r.resolution_x, r.resolution_y, r.resolution_percentage, r.filepath)
-    ratio = r.resolution_x / r.resolution_y if a.get("cam") else region.width / max(1, region.height)
-    r.resolution_x, r.resolution_y = (size, int(size / ratio)) if ratio >= 1 else (int(size * ratio), size)
-    r.resolution_percentage = 100
-    r.filepath = raw
+    r.resolution_x, r.resolution_y, r.resolution_percentage, r.filepath = w, h, 100, raw
     # Render through the viewport so its shading applies, and in material preview use the scene's own
     # lights and world instead of the studio HDRI, otherwise lighting changes are invisible to Claude.
     sh, r3d = space.shading, space.region_3d
@@ -1316,7 +1306,7 @@ def look(a):
     space.overlay.show_overlays = False  # no grid, outlines or gizmos in the capture
     if sh.type == "MATERIAL":
         sh.use_scene_lights = sh.use_scene_world = True
-    if a.get("cam") and sc.camera:
+    if cam and sc.camera:
         r3d.view_perspective = "CAMERA"
     try:
         with bpy.context.temp_override(window=win, area=area, region=region):
@@ -1324,19 +1314,129 @@ def look(a):
     finally:
         r.resolution_x, r.resolution_y, r.resolution_percentage, r.filepath = old
         sh.use_scene_lights, sh.use_scene_world, r3d.view_perspective, space.overlay.show_overlays = saved
-    img = bpy.data.images.load(raw, check_existing=False)
+    return raw
+
+
+def _view_state():
+    _, _, _, space = view3d()
+    r3d = space.region_3d
+    sel = [o.name for o in bpy.context.selected_objects]
+    act = bpy.context.view_layer.objects.active
+    return (r3d.view_location.copy(), r3d.view_rotation.copy(), r3d.view_distance, r3d.view_perspective,
+            space.shading.type, sel, act.name if act else None)
+
+
+def _restore_view(st):
+    _, area, _, space = view3d()
+    r3d = space.region_3d
+    r3d.view_location, r3d.view_rotation, r3d.view_distance, r3d.view_perspective, space.shading.type = st[:5]
+    for o in bpy.context.selected_objects:
+        o.select_set(False)
+    for n in st[5]:
+        o = bpy.data.objects.get(n)
+        if o:
+            o.select_set(True)
+    bpy.context.view_layer.objects.active = bpy.data.objects.get(st[6]) if st[6] else None
+    area.tag_redraw()
+
+
+_VIEW_KEYS = ("preset", "orbit", "zoom", "frame", "shading", "dist", "at")
+
+
+def _tile_size(size, ratio):
+    return (size, max(1, int(size / ratio))) if ratio >= 1 else (max(1, int(size * ratio)), size)
+
+
+def look(a):
+    """Capture the viewport (or camera via 'cam': true) downscaled to max px. Returns a file path.
+    views: ['cam','front','right','top',...] returns one grid image (one tile per view, labelled in the reply)
+    and leaves the user's view and selection as they were. Single looks keep the view change unless keep:false."""
+    size = int(a.get("max", 512))
+    tmp = tempfile.gettempdir()
+    raw = os.path.join(tmp, "claude_look_raw.png")
+    out = os.path.join(tmp, "claude_look.jpg")
+    sc = bpy.context.scene
+    views = a.get("views")
+    keep = a.get("keep", not views)
+    st = _view_state()
     try:
-        w, h = img.size
-        k = min(1.0, size / max(w, h))
-        if k < 1.0:
-            img.scale(max(1, int(w * k)), max(1, int(h * k)))
+        if views:
+            if not isinstance(views, list) or not views:
+                raise ValueError("views needs a list like ['cam','front','right','top']")
+            _grid(views[:6], size, a, raw, out)
+            note = "tiles: " + ", ".join(f"{i + 1} {v}" for i, v in enumerate(views[:6]))
+            if "cam" in views and sc.camera is None:
+                note += " (no camera: cam tile shows the viewport)"
+            return {"ok": True, "image": out, "text": note}
+        if any(k in a for k in _VIEW_KEYS):
+            op_view(a)
+        _, _, region, _ = view3d()
+        ratio = sc.render.resolution_x / sc.render.resolution_y if a.get("cam") else region.width / max(1, region.height)
+        _capture(*_tile_size(size, ratio), a.get("cam"), raw)
+        _jpeg_to(raw, out, size)
+        text = op_view({})
+        if a.get("cam") and sc.camera is None:
+            text += " (no camera: showing the viewport)"
+        return {"ok": True, "image": out, "text": text}
+    finally:
+        if not keep:
+            _restore_view(st)
+
+
+def _jpeg_to(src, out, size):
+    tmp = _jpeg(src, size, os.path.basename(out))
+    return tmp
+
+
+def _grid(views, size, a, raw, out):
+    """Render each view into a tile and compose them into one image (2 columns)."""
+    import numpy as np
+    _, _, region, _ = view3d()
+    n = len(views)
+    cols = 1 if n == 1 else 2
+    rows = (n + cols - 1) // cols
+    tw, th = _tile_size(size // cols, region.width / max(1, region.height))
+    canvas = np.zeros((rows * th, cols * tw, 4), dtype=np.float32)
+    base = {k: a[k] for k in ("shading",) if k in a}
+    frame = a.get("frame")
+    if not frame:
+        # Frame the actual subject: big flat planes (floors, ground) would shrink everything else to a dot.
+        subj = [o.name for o in bpy.context.scene.objects
+                if o.visible_get() and o.type in ("MESH", "CURVE", "FONT") and min(o.dimensions) > 0.02]
+        frame = subj or "all"
+    for i, v in enumerate(views):
+        cam = v == "cam"
+        if not cam:
+            op_view({"preset": "persp" if v == "persp" else v, **base} if v in _VIEWS or v == "persp" else base)
+            if frame == "all":
+                op_view({"frame": "all"})
+            else:
+                op_select({"obj": frame})
+                op_view({"frame": "sel"})
+        _capture(tw, th, cam, raw)
+        img = bpy.data.images.load(raw, check_existing=False)
+        try:
+            if tuple(img.size) != (tw, th):
+                img.scale(tw, th)
+            px = np.empty(tw * th * 4, dtype=np.float32)
+            img.pixels.foreach_get(px)
+        finally:
+            bpy.data.images.remove(img)
+        r_, c_ = divmod(i, cols)
+        y0 = (rows - 1 - r_) * th  # image rows start at the bottom
+        canvas[y0:y0 + th, c_ * tw:(c_ + 1) * tw] = px.reshape(th, tw, 4)
+    canvas[..., 3] = 1.0
+    img = bpy.data.images.new("claude_look_grid", cols * tw, rows * th)
+    try:
+        img.pixels.foreach_set(canvas.ravel())
         img.filepath_raw = out
         img.file_format = "JPEG"
-        bpy.context.scene.render.image_settings.quality = 80
-        img.save()
+        try:
+            img.save(quality=80)
+        except TypeError:
+            img.save()
     finally:
         bpy.data.images.remove(img)
-    return {"ok": True, "image": out, "text": op_view({})}
 
 
 # ---------------------------------------------------------------- batch runner
