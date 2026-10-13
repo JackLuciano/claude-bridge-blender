@@ -29,6 +29,9 @@ MAX_TURNS = 30  # tool round trips per message; stops runaway loops
 
 MODEL_ITEMS_STATIC = [("opus", "Opus", "Most capable (default)"), ("sonnet", "Sonnet", "Faster"),
                       ("haiku", "Haiku", "Fastest, cheapest"), ("default", "CLI default", "Your Claude Code default model")]
+MODE_ITEMS = [("build", "Build", "Claude changes the scene directly"),
+              ("plan", "Plan first", "Claude proposes steps; you tick and apply them (applying costs no tokens)"),
+              ("coach", "Coach", "Claude can look but not touch: it teaches you the next step")]
 EFFORT_ITEMS = [("default", "Effort: default", "The model's default reasoning effort"),
                 ("low", "Effort: low", "Quick edits, fewest tokens"), ("medium", "Effort: medium", ""),
                 ("high", "Effort: high", ""), ("max", "Effort: max", "Hardest builds, most tokens")]
@@ -80,6 +83,10 @@ state = {
     "usage": None,       # figures from the last reply's result event
     "batches": [],       # every bl call of this chat: {id, ops, ok}, for recipes
     "draft": "",         # text of the reply being streamed right now
+    "mode": "build",     # mode of the last message: build | plan | coach
+    "plan": None,        # Plan mode: {summary, steps: [{title, ops}]} waiting for Apply
+    "plan_ticks": [],
+    "plan_error": "",
 }
 
 
@@ -470,30 +477,57 @@ def blender_python():
     return sys.executable or "python3"
 
 
-def _mcp_config():
+def _mcp_config(mode="build"):
     # Blender's bundled Python runs the stdlib-only MCP server, so no system Python is needed.
     from . import PORT
+    env = {"CLAUDE_BRIDGE_PORT": str(PORT)}
+    if mode in ("coach", "plan"):
+        env["CLAUDE_BRIDGE_MODE"] = mode  # the bridge then refuses scene changes from this chat
     cfg = {"mcpServers": {SERVER: {"command": blender_python(),
-                                   "args": [os.path.join(ADDON_DIR, "mcp_server.py")],
-                                   "env": {"CLAUDE_BRIDGE_PORT": str(PORT)}}}}
-    # One file per port: two Blenders must not overwrite each other's config.
-    path = os.path.join(tempfile.gettempdir(), f"claude_bridge_mcp_{PORT}.json")
+                                   "args": [os.path.join(ADDON_DIR, "mcp_server.py")], "env": env}}}
+    # One file per port and mode: two Blenders (or modes) must not overwrite each other's config.
+    suffix = "" if mode == "build" else f"_{mode}"
+    path = os.path.join(tempfile.gettempdir(), f"claude_bridge_mcp_{PORT}{suffix}.json")
     with open(path, "w") as f:
         json.dump(cfg, f)
     return path
 
 
-def system_prompt(extra=""):
+MODE_PROMPTS = {
+    "coach": ("# Coach mode\n\nYou are a patient Blender tutor. You can inspect the scene (scene, info, get, check, api, "
+              "look) but you cannot change it: the user does the work. Give ONE next step at a time, naming the exact "
+              "menu path and shortcut (e.g. 'Add ▸ Mesh ▸ Cube, Shift+A'), then wait. When the user asks you to check "
+              "their work, look and say what is right and what to fix. Never write Python for them."),
+    "plan": ("# Plan mode\n\nInspect the scene read-only (scene, info, check, look) but do not change it. Then answer "
+             "with a plan: a short summary and 2-8 steps, each with a title and the exact `bl` ops that would do it. "
+             "The user ticks the steps they want and the add-on runs them without you."),
+}
+
+PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "steps": {"type": "array", "items": {"type": "object", "properties": {
+            "title": {"type": "string"}, "ops": {"type": "array", "items": {"type": "object"}}},
+            "required": ["title", "ops"]}},
+    },
+    "required": ["summary", "steps"],
+}
+
+
+def system_prompt(extra="", mode="build"):
     text = SYSTEM_PROMPT + "\n\n" + skill_body()
+    if mode in MODE_PROMPTS:
+        text += "\n\n" + MODE_PROMPTS[mode]
     if extra.strip():
         text += "\n\n# The user's standing instructions\n\n" + extra.strip()
     return text
 
 
-def system_prompt_file(extra=""):
+def system_prompt_file(extra="", mode="build"):
     """Write the chat's whole system prompt to a file (rewritten only when it changes, so it stays cache-friendly)."""
-    text = system_prompt(extra)
-    path = os.path.join(chats_dir(), "system_prompt.md")
+    text = system_prompt(extra, mode)
+    path = os.path.join(chats_dir(), "system_prompt.md" if mode == "build" else f"system_prompt_{mode}.md")
     try:
         with open(path, encoding="utf-8") as f:
             if f.read() == text:
@@ -505,18 +539,20 @@ def system_prompt_file(extra=""):
     return path
 
 
-def build_cmd(claude, session=None, model="opus", effort=None, extra=""):
+def build_cmd(claude, session=None, model="opus", effort=None, extra="", mode="build"):
     # Slim context: no built-in tools, skills, other MCP servers or user settings/hooks, and our own system
     # prompt instead of Claude Code's coding-agent one (the chat never uses its tools or guidance).
     # Measured: ~62k -> ~6.7k context tokens per message with --append-system-prompt; replacing the prompt saves
     # a few thousand more on every call. A file also avoids a 5 KB multi-line argv through npm's claude.cmd shim.
     cmd = [claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
            "--tools=", "--disable-slash-commands", "--setting-sources=",
-           "--mcp-config", _mcp_config(), "--strict-mcp-config",
+           "--mcp-config", _mcp_config(mode), "--strict-mcp-config",
            "--allowedTools", f"mcp__{SERVER}__bl", f"mcp__{SERVER}__look",
-           "--system-prompt-file", system_prompt_file(extra),
+           "--system-prompt-file", system_prompt_file(extra, mode),
            "--max-turns", str(MAX_TURNS),
            "--include-partial-messages"]  # stream text as it's written (more events, same tokens)
+    if mode == "plan":
+        cmd += ["--json-schema", json.dumps(PLAN_SCHEMA)]
     if effort and effort != "default":
         cmd += ["--effort", effort]
     if session:
@@ -610,6 +646,12 @@ def handle_event(ev):
         state["session"] = ev.get("session_id", state["session"])
         state["cost"] += ev.get("total_cost_usd") or 0
         state["usage"] = usage_from_result(ev)
+        if state.get("mode") == "plan" and not ev.get("is_error"):
+            plan = ev.get("structured_output") or _plan_from_text(str(ev.get("result") or ""))
+            if plan and plan.get("steps"):
+                state["plan"] = plan
+                state["plan_ticks"] = [True] * len(plan["steps"])
+                state["plan_error"] = ""
         if ev.get("subtype") == "error_max_turns":
             _push("info", f"stopped after {MAX_TURNS} steps; say 'continue' to go on")
         elif ev.get("is_error"):
@@ -649,6 +691,42 @@ def _kill_tree(proc):
         proc.kill()
     except OSError:
         pass
+
+
+def _plan_from_text(text):
+    """Fallback when the CLI returns no structured_output: the first JSON object with 'steps' in the reply."""
+    for m in re.finditer(r"\{", text):
+        depth = 0
+        for j in range(m.start(), len(text)):
+            depth += {"{": 1, "}": -1}.get(text[j], 0)
+            if depth == 0:
+                try:
+                    obj_ = json.loads(text[m.start():j + 1])
+                except ValueError:
+                    break
+                if isinstance(obj_, dict) and isinstance(obj_.get("steps"), list):
+                    return obj_
+                break
+    return None
+
+
+def apply_plan():
+    """Run the ticked plan steps directly (no model call), as one undo step. Returns (ok, text)."""
+    from . import _handle_request
+    plan = state.get("plan") or {}
+    ops = [o for s, on in zip(plan.get("steps", []), state.get("plan_ticks", [])) if on for o in s.get("ops", [])]
+    if not ops:
+        return False, "no steps ticked"
+    r = _handle_request({"ops": ops})
+    n = sum(state["plan_ticks"])
+    if r["ok"]:
+        state["plan"] = None
+        _push("info", f"applied {n} plan step{'s' if n > 1 else ''} ({len(ops)} ops, no tokens)")
+    else:
+        err = [ln for ln in r["text"].splitlines() if "ERR" in ln]
+        state["plan_error"] = err[0] if err else r["text"][:200]
+        _push("error", f"plan failed: {state['plan_error']}")
+    return r["ok"], r["text"]
 
 
 def usage_from_result(ev):
@@ -921,7 +999,7 @@ def revert_turn():
     _push("info", f"reverted the last reply ({n} step{'s' if n > 1 else ''})")
 
 
-def send(prompt, model="opus", effort=None, ctx=True):
+def send(prompt, model="opus", effort=None, ctx=True, mode="build"):
     claude = find_claude()
     if not claude:
         _push("error", "claude CLI not found. Install Claude Code and run `claude` once to log in.")
@@ -944,13 +1022,14 @@ def send(prompt, model="opus", effort=None, ctx=True):
         line = (line + "\n" if line else "") + seed
     state["busy"] = True
     state["draft"] = ""
-    cmd = build_cmd(claude, state["session"], model, effort, custom_instructions())
+    state["mode"] = mode
+    cmd = build_cmd(claude, state["session"], model, effort, custom_instructions(), mode)
     msg = build_message(prompt, images, line)
     p = _prefs()
     if p and p.persistent_cli:
         from . import PORT
         # Switching chats closes the session (new_chat/load), so the key only covers the CLI settings.
-        _send_persistent(cmd, msg, (model, effort, PORT, custom_instructions()))
+        _send_persistent(cmd, msg, (model, effort, PORT, custom_instructions(), mode))
     else:
         threading.Thread(target=_worker, args=(cmd, msg), daemon=True).start()
 
@@ -1117,6 +1196,128 @@ class CLAUDE_OT_chat_revert(bpy.types.Operator):
             self.report({"WARNING"}, str(e))
             return {"CANCELLED"}
         return {"FINISHED"}
+
+
+class CLAUDE_OT_plan_tick(bpy.types.Operator):
+    bl_idname = "claude.plan_tick"
+    bl_label = "Toggle step"
+    index: bpy.props.IntProperty()
+
+    def execute(self, context):
+        t = state.get("plan_ticks") or []
+        if 0 <= self.index < len(t):
+            t[self.index] = not t[self.index]
+        return {"FINISHED"}
+
+
+class CLAUDE_OT_plan_apply(bpy.types.Operator):
+    bl_idname = "claude.plan_apply"
+    bl_label = "Apply ticked steps"
+    bl_description = "Run the ticked steps' ops directly, as one undo step (no Claude call, no tokens)"
+
+    def execute(self, context):
+        ok, _ = apply_plan()
+        return {"FINISHED"} if ok else {"CANCELLED"}
+
+
+class CLAUDE_OT_plan_discard(bpy.types.Operator):
+    bl_idname = "claude.plan_discard"
+    bl_label = "Discard plan"
+
+    def execute(self, context):
+        state["plan"] = None
+        return {"FINISHED"}
+
+
+class CLAUDE_OT_plan_fix(bpy.types.Operator):
+    bl_idname = "claude.plan_fix"
+    bl_label = "Ask Claude to fix"
+    bl_description = "Send only the error back to Claude (Build mode) so it can finish the job"
+
+    def execute(self, context):
+        err = state.get("plan_error") or ""
+        state["plan"] = None
+        send_from_ui(f"Applying your plan stopped with: {err}. The steps before it were applied. Fix it and finish.",
+                     context.window_manager, mode="build")
+        return {"FINISHED"}
+
+
+def _lesson_items(self, context):
+    from . import coach
+    items = [("NONE", "Pick a lesson", "")] + [(k, v["title"], f"{len(v['steps'])} steps") for k, v in coach.lessons().items()]
+    if _lesson_keep and _lesson_keep[-1] == items:
+        return _lesson_keep[-1]
+    _lesson_keep.append(items)  # see _enum_keep: Blender keeps raw pointers to these strings
+    del _lesson_keep[:-32]
+    return items
+
+
+_lesson_keep = []
+
+
+def _on_lesson(self, context):
+    from . import coach
+    coach.progress.update(lesson=None if self.claude_lesson == "NONE" else self.claude_lesson, step=0, last="")
+
+
+class CLAUDE_OT_lesson_check(bpy.types.Operator):
+    bl_idname = "claude.lesson_check"
+    bl_label = "Check my work"
+    bl_description = "Check this step locally (no tokens); passing moves to the next step"
+
+    def execute(self, context):
+        from . import coach
+        ok, msg = coach.check_step()
+        _push("info" if ok else "hint", msg)
+        return {"FINISHED"}
+
+
+class CLAUDE_OT_lesson_hint(bpy.types.Operator):
+    bl_idname = "claude.lesson_hint"
+    bl_label = "Ask for a hint"
+    bl_description = "Ask Claude (Coach mode: it can look but not change anything)"
+
+    def execute(self, context):
+        from . import coach
+        if coach.current()[0] is None:
+            return {"CANCELLED"}
+        send_from_ui(coach.hint_prompt(), context.window_manager, mode="coach")
+        return {"FINISHED"}
+
+
+def _draw_modes(layout, wm, width=48):
+    """Plan checklist (Plan mode) or the lesson box (Coach mode)."""
+    plan = state.get("plan")
+    if plan:
+        box = layout.box()
+        box.label(text="Plan: " + str(plan.get("summary", ""))[:80], icon="PRESET")
+        for i, s in enumerate(plan.get("steps", [])):
+            on = state["plan_ticks"][i] if i < len(state.get("plan_ticks", [])) else False
+            row = box.row(align=True)
+            row.operator("claude.plan_tick", text="", icon="CHECKBOX_HLT" if on else "CHECKBOX_DEHLT", emboss=False).index = i
+            from .ops import describe_risky
+            risky = describe_risky(s.get("ops", []))
+            row.label(text=f"{s.get('title', 'step')} ({len(s.get('ops', []))} ops)", icon="ERROR" if risky else "NONE")
+        row = box.row(align=True)
+        row.operator("claude.plan_apply", icon="CHECKMARK")
+        row.operator("claude.plan_discard", text="", icon="X")
+        if state.get("plan_error"):
+            box.operator("claude.plan_fix", icon="TOOL_SETTINGS")
+    if wm.claude_chat_mode == "coach":
+        from . import coach
+        box = layout.box()
+        box.prop(wm, "claude_lesson", text="")
+        les, step = coach.current()
+        if les:
+            done = coach.progress["step"] >= len(les["steps"])
+            box.label(text="Lesson complete!" if done else f"Step {coach.progress['step'] + 1}/{len(les['steps'])}",
+                      icon="CHECKMARK" if done else "BOOKMARKS")
+            if not done:
+                for line in textwrap.wrap(step["text"], width):
+                    box.label(text=line)
+                row = box.row(align=True)
+                row.operator("claude.lesson_check", icon="CHECKMARK")
+                row.operator("claude.lesson_hint", icon="QUESTION")
 
 
 class CLAUDE_OT_chat_handoff(bpy.types.Operator):
@@ -1417,8 +1618,8 @@ class CLAUDE_PT_chat(bpy.types.Panel):
             if state.get("draft"):
                 hist.append(("claude", state["draft"] + " …"))
         if not hist:
-            box.label(text="Ask for anything, or start from one of these:", icon="INFO")
-            grid = box.grid_flow(columns=2, even_columns=True, align=True)
+            box.label(text="Ask for anything, or start here:", icon="INFO")
+            grid = box.column(align=True)  # one column: the sidebar is too narrow for two labels side by side
             for i, t in visible_templates(empty_only=True)[:6]:
                 grid.operator("claude.chat_template", text=t["label"], icon=t.get("icon", "NONE")).index = i
         # Panels don't auto-scroll: show only the newest lines that fit, so the latest reply is always visible.
@@ -1450,6 +1651,8 @@ class CLAUDE_PT_chat(bpy.types.Panel):
             sub.enabled = can_revert()[0]
             sub.operator("claude.chat_revert", text="Revert reply", icon="LOOP_BACK")
 
+        _draw_modes(layout, wm, width)
+
         if state["attachments"]:
             row = layout.row(align=True)
             row.label(text=f"{len(state['attachments'])} image(s) attached", icon="IMAGE_DATA")
@@ -1470,6 +1673,8 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         row.operator("claude.inbox_import", text="", icon="IMPORT")
         row.menu("CLAUDE_MT_templates", text="", icon="PRESET")
         row.operator("claude.chat_copy", text="", icon="COPYDOWN")
+        row = layout.row(align=True)
+        row.prop(wm, "claude_chat_mode", text="")
         row.prop(wm, "claude_chat_model", text="")
         row.prop(wm, "claude_chat_effort", text="")
 
@@ -1508,9 +1713,10 @@ def prefill(wm, text):
         _suppress_send[0] = False
 
 
-def send_from_ui(msg, wm, model=None):
+def send_from_ui(msg, wm, model=None, mode=None):
     p = _prefs()
-    send(msg, model or wm.claude_chat_model, wm.claude_chat_effort, ctx=p.send_context if p else True)
+    send(msg, model or wm.claude_chat_model, wm.claude_chat_effort, ctx=p.send_context if p else True,
+         mode=mode or wm.claude_chat_mode)
 
 
 def _on_model_update(self, context):
@@ -1593,7 +1799,7 @@ def _redraw():
         _close_session()  # a resident CLI holds memory; start a fresh one next time
     from . import pending
     from .doctor import result as doc
-    sig = (len(state["history"]), len(state.get("draft", "")), state["busy"], len(state["attachments"]), state["chat_id"], len(pending),
+    sig = (len(state["history"]), len(state.get("draft", "")), id(state.get("plan")), state["busy"], len(state["attachments"]), state["chat_id"], len(pending),
            doc["checked"], doc["state"])
     if sig != _last[0]:
         _last[0] = sig
@@ -1606,7 +1812,8 @@ def _redraw():
 
 classes = (CLAUDE_OT_chat_send, CLAUDE_OT_chat_stop, CLAUDE_OT_chat_new, CLAUDE_OT_chat_delete, CLAUDE_OT_chat_copy,
            CLAUDE_OT_attach, CLAUDE_OT_attach_file, CLAUDE_OT_paste, CLAUDE_OT_attach_clear, CLAUDE_OT_chat_revert,
-           CLAUDE_OT_select_changed, CLAUDE_OT_chat_handoff, CLAUDE_OT_inbox, CLAUDE_OT_template, CLAUDE_OT_recipe_export, CLAUDE_OT_recipe_replay, CLAUDE_MT_templates,
+           CLAUDE_OT_select_changed, CLAUDE_OT_chat_handoff, CLAUDE_OT_plan_tick, CLAUDE_OT_plan_apply,
+           CLAUDE_OT_plan_discard, CLAUDE_OT_plan_fix, CLAUDE_OT_lesson_check, CLAUDE_OT_lesson_hint, CLAUDE_OT_inbox, CLAUDE_OT_template, CLAUDE_OT_recipe_export, CLAUDE_OT_recipe_replay, CLAUDE_MT_templates,
            CLAUDE_PT_chat)
 
 _keymaps = []
@@ -1633,6 +1840,8 @@ def register():
                                                   update=_on_model_update)
     wm.claude_chat_effort = bpy.props.EnumProperty(name="Effort", default="default", items=EFFORT_ITEMS,
                                                    update=_on_effort_update)
+    wm.claude_chat_mode = bpy.props.EnumProperty(name="Mode", default="build", items=MODE_ITEMS)
+    wm.claude_lesson = bpy.props.EnumProperty(name="Lesson", items=_lesson_items, update=_on_lesson)
     wm.claude_chat_list = bpy.props.EnumProperty(name="Chats", description="Saved chats",
                                                  items=_chat_items, get=_chat_get, set=_chat_set)
     if not bpy.app.timers.is_registered(_redraw):
@@ -1649,7 +1858,8 @@ def unregister():
     for km, kmi in _keymaps:
         km.keymap_items.remove(kmi)
     _keymaps.clear()
-    for p in ("claude_chat_input", "claude_chat_model", "claude_chat_effort", "claude_chat_list"):
+    for p in ("claude_chat_input", "claude_chat_model", "claude_chat_effort", "claude_chat_mode", "claude_lesson",
+              "claude_chat_list"):
         delattr(bpy.types.WindowManager, p)
     from . import doctor
     for c in reversed(classes + doctor.classes):

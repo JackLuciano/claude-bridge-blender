@@ -1,0 +1,23 @@
+{
+  "title": "Your first table",
+  "steps": [
+    {"text": "Add a cube for the table top (Shift+A ▸ Mesh ▸ Cube) and rename it 'Top' (F2).",
+     "checks": [{"exists": "Top"}]},
+    {"text": "Make the top 1.2 × 0.8 × 0.05 m: N sidebar ▸ Item ▸ Dimensions.",
+     "checks": [{"dims": {"obj": "Top", "approx": [1.2, 0.8, 0.05], "tol": 0.05}}]},
+    {"text": "Add a cylinder leg named 'Leg', about 0.05 × 0.05 × 0.72 m.",
+     "checks": [{"exists": "Leg"}, {"dims": {"obj": "Leg", "approx": [0.05, 0.05, 0.72], "tol": 0.05}}]},
+    {"text": "Stand the leg on the floor: move it up (G Z) until its bottom is at 0.",
+     "checks": [{"on_floor": "Leg"}]},
+    {"text": "Make four legs (Shift+D to duplicate, then move each to a corner).",
+     "checks": [{"count": {"type": "MESH", "min": 5}}]},
+    {"text": "Rest the top on the legs: its bottom should touch their tops (about 0.72 m up).",
+     "checks": [{"bottom": {"obj": "Top", "z": 0.72, "tol": 0.03}}]},
+    {"text": "Round the top's edges: Modifiers ▸ Add ▸ Generate ▸ Bevel.",
+     "checks": [{"mod": {"obj": "Top", "type": "BEVEL"}}]},
+    {"text": "Give the top a material: Properties ▸ Material ▸ New, then pick a wood colour.",
+     "checks": [{"mat": "Top"}]},
+    {"text": "Add a camera (Shift+A ▸ Camera) and look through it (Numpad 0).",
+     "checks": [{"camera": true}]}
+  ]
+}

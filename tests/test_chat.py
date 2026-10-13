@@ -413,6 +413,48 @@ def t_doctor():
 
 
 @test
+def t_modes_plan_coach():
+    from claude_bridge import coach, ops
+    # Plan mode: read-only MCP config, plan prompt and JSON schema
+    cmd = chat.build_cmd("claude", mode="plan")
+    cfg = json.load(open(cmd[cmd.index("--mcp-config") + 1]))
+    assert cfg["mcpServers"]["blender-bridge"]["env"]["CLAUDE_BRIDGE_MODE"] == "plan"
+    assert "--json-schema" in cmd and "Plan mode" in open(cmd[cmd.index("--system-prompt-file") + 1], encoding="utf-8").read()
+    assert "CLAUDE_BRIDGE_MODE" not in json.load(open(chat.build_cmd("claude")[chat.build_cmd("claude").index("--mcp-config") + 1]))["mcpServers"]["blender-bridge"]["env"]
+    # The bridge refuses changes in coach/plan mode, but allows looking
+    r = claude_bridge._handle_request({"mode": "coach", "ops": [{"op": "add", "name": "Nope"}]})
+    assert not r["ok"] and "read-only" in r["text"] and "Nope" not in bpy.data.objects
+    r = claude_bridge._handle_request({"mode": "plan", "ops": [{"op": "scene"}, {"op": "check"}]})
+    assert r["ok"], r
+    # A plan arrives as structured output (or JSON in the text) and applies without Claude
+    ops.op_new({})
+    chat.new_chat()
+    chat.state["mode"] = "plan"
+    chat.handle_event({"type": "result", "result": 'Here: {"summary": "desk", "steps": ['
+                       '{"title": "Top", "ops": [{"op": "add", "type": "cube", "name": "Desk"}]}, '
+                       '{"title": "Lamp", "ops": [{"op": "add", "type": "point", "name": "Lamp"}]}]}'})
+    assert chat.state["plan"] and chat.state["plan_ticks"] == [True, True]
+    chat.state["plan_ticks"][1] = False
+    ok, _ = chat.apply_plan()
+    assert ok and "Desk" in bpy.data.objects and "Lamp" not in bpy.data.objects and chat.state["plan"] is None
+    chat.handle_event({"type": "result", "structured_output": {"summary": "x", "steps": [
+        {"title": "bad", "ops": [{"op": "set", "obj": "Missing", "loc": [0, 0, 0]}]}]}})
+    ok, _ = chat.apply_plan()
+    assert not ok and "Missing" in chat.state["plan_error"]
+    # Coach lessons are checked locally
+    assert "first_table" in coach.lessons()
+    coach.progress.update(lesson="first_table", step=0, last="")
+    ok, msg = coach.check_step()
+    assert not ok and "Top" in msg
+    ops.run_batch([{"op": "add", "type": "cube", "name": "Top"}])
+    ok, msg = coach.check_step()
+    assert ok and coach.progress["step"] == 1 and "Dimensions" in msg, msg
+    ops.run_batch([{"op": "set", "obj": "Top", "dims": [1.2, 0.8, 0.05]}])
+    assert coach.check_step()[0]
+    assert "step 3" in coach.hint_prompt()
+
+
+@test
 def t_missing_cli():
     chat.new_chat()
     orig = chat.find_claude

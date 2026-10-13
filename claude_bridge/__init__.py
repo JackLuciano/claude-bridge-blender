@@ -44,6 +44,13 @@ def _handle_request(req: dict) -> dict:
     if "look" in req:
         return bridge_ops.look(req["look"] or {})
     batch = req.get("ops", [])
+    if req.get("mode") in ("coach", "plan"):
+        # Enforced here, not just asked for in the prompt: in these chat modes Claude may only look.
+        bad = sorted({str(bridge_ops._normalize(a).get("op")) for a in batch} - bridge_ops.READ_ONLY)
+        if bad:
+            return {"ok": False, "text": f"ERR {req['mode']} mode is read-only: {', '.join(bad)} not allowed. "
+                                         + ("Describe the step for the user instead." if req["mode"] == "coach"
+                                            else "Put these ops in your plan instead.")}
     from . import doctor
     doctor.recent_ops.append(",".join(str(bridge_ops._normalize(a).get("op")) for a in batch)[:120])
     results, ok = bridge_ops.run_batch(batch)
