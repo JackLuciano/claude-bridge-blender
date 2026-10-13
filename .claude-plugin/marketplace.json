@@ -1,0 +1,14 @@
+{
+  "name": "claude-bridge-blender",
+  "owner": {
+    "name": "JackLuciano"
+  },
+  "description": "Claude Bridge for Blender: chat with Claude to build and edit Blender scenes.",
+  "plugins": [
+    {
+      "name": "blender-bridge",
+      "source": "./plugin",
+      "description": "Drive a live Blender from Claude Code (MCP server + modelling skill). Install the Claude Bridge add-on in Blender first."
+    }
+  ]
+}

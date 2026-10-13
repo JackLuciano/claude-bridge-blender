@@ -9,7 +9,7 @@ short text line per op. Every batch is a single undo step.
 bl_info = {
     "name": "Claude Bridge",
     "author": "JackLuciano",
-    "version": (0, 1, 2),
+    "version": (0, 2, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Claude",
     "description": "Compact op-based control channel for Claude Code (MCP)",
@@ -357,6 +357,66 @@ class CLAUDE_OT_copy_mcp(bpy.types.Operator):
         return {"FINISHED"}
 
 
+_cc = {"state": None, "busy": False}  # Claude Code registration status: None unknown, True/False
+
+
+def _cc_status():
+    """Is blender-bridge registered with Claude Code? (background thread; 'claude mcp get' is slow)"""
+    import subprocess
+    claude = chat.find_claude()
+    if not claude:
+        _cc["state"] = None
+        return
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    try:
+        r = subprocess.run([claude, "mcp", "get", "blender-bridge"], capture_output=True, text=True, timeout=30,
+                           creationflags=flags, env=chat.child_env())
+        _cc["state"] = r.returncode == 0
+    except Exception:
+        _cc["state"] = None
+
+
+def _cc_connect():
+    import shlex
+    import subprocess
+    claude = chat.find_claude()
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    env = chat.child_env()
+    try:
+        subprocess.run([claude, "mcp", "remove", "-s", "user", "blender-bridge"], capture_output=True, timeout=30,
+                       creationflags=flags, env=env)
+        args = shlex.split(mcp_add_command(), posix=os.name != "nt")[1:]
+        args = [x.strip('"') for x in args]
+        subprocess.run([claude, *args], capture_output=True, timeout=30, creationflags=flags, env=env)
+        chat.install_skill()
+    finally:
+        _cc_status()
+        _cc["busy"] = False
+
+
+class CLAUDE_OT_connect_cc(bpy.types.Operator):
+    bl_idname = "claude.connect_claude_code"
+    bl_label = "Connect Claude Code"
+    bl_description = "Register this Blender's bridge with Claude Code and install the skill (restart Claude Code after)"
+
+    def execute(self, context):
+        if not chat.find_claude():
+            self.report({"ERROR"}, "claude CLI not found")
+            return {"CANCELLED"}
+        _cc["busy"] = True
+        threading.Thread(target=_cc_connect, daemon=True).start()
+        return {"FINISHED"}
+
+
+def skill_outdated(home=None):
+    """True when Claude Code's installed copy of the skill differs from this add-on's version."""
+    dst = os.path.join(home or os.path.expanduser("~"), ".claude", "skills", "blender-bridge", "SKILL.md")
+    if not os.path.exists(dst):
+        return None
+    with open(dst, "rb") as a, open(chat.SKILL_FILE, "rb") as b:
+        return a.read() != b.read()
+
+
 class CLAUDE_OT_install_skill(bpy.types.Operator):
     bl_idname = "claude.install_skill"
     bl_label = "Install Claude Code skill"
@@ -390,14 +450,24 @@ class CLAUDE_PT_panel(bpy.types.Panel):
             col.label(text="Another Blender has the default port;", icon="INFO")
             col.label(text="Claude Code talks to that one.", icon="BLANK1")
         col.operator("claude.toggle_bridge", text="Stop" if _server else "Start")
+        col.separator()
+        col.label(text="Claude Code (terminal / desktop):")
+        if _cc["busy"]:
+            col.label(text="Connecting…", icon="SORTTIME")
+        elif _cc["state"] is True:
+            col.label(text="Connected (blender-bridge)", icon="CHECKMARK")
+        col.operator("claude.connect_claude_code", icon="LINKED",
+                     text="Reconnect Claude Code" if _cc["state"] else "Connect Claude Code")
         col.operator("claude.copy_mcp_command", icon="COPYDOWN")
-        col.operator("claude.install_skill", icon="BOOKMARKS")
+        outdated = skill_outdated()
+        col.operator("claude.install_skill", icon="ERROR" if outdated else "BOOKMARKS",
+                     text="Update Claude Code skill (outdated)" if outdated else "Install Claude Code skill")
         row = col.row(align=True)
         row.operator("claude.doctor_check", icon="CHECKMARK")
         row.operator("claude.copy_diagnostics", icon="URL")
 
 
-_classes = (ClaudeBridgePrefs, CLAUDE_OT_approve, CLAUDE_OT_toggle, CLAUDE_OT_copy_mcp, CLAUDE_OT_install_skill, CLAUDE_PT_panel)
+_classes = (ClaudeBridgePrefs, CLAUDE_OT_approve, CLAUDE_OT_connect_cc, CLAUDE_OT_toggle, CLAUDE_OT_copy_mcp, CLAUDE_OT_install_skill, CLAUDE_PT_panel)
 
 
 def _autostart():
@@ -408,6 +478,7 @@ def _autostart():
     if not bpy.app.background:
         from . import doctor
         doctor.run_async()
+        threading.Thread(target=_cc_status, daemon=True).start()
     return None
 
 

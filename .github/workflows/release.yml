@@ -1,0 +1,62 @@
+name: release
+
+# Push a tag like v0.2.0: builds the extension zip, attaches it to the GitHub release (creating the release
+# from CHANGELOG.md if needed) and publishes a Blender extension repository on GitHub Pages, so users who add
+# https://jackluciano.github.io/claude-bridge-blender/index.json under Preferences > Get Extensions > Repositories
+# get updates inside Blender. One-time setup: Settings > Pages > Source: GitHub Actions.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Blender
+        run: |
+          mkdir -p blender
+          curl -sSL https://download.blender.org/release/Blender4.2/blender-4.2.23-linux-x64.tar.xz | tar -xJ -C blender --strip-components=1
+          sudo apt-get update -qq && sudo apt-get install -y -qq libegl1 libgl1 libxkbcommon0 libsm6 libxi6 libxxf86vm1 libxfixes3 libxrender1 > /dev/null
+
+      - name: Check versions match the tag
+        run: |
+          tag=${GITHUB_REF_NAME#v}
+          grep -q "^version = \"$tag\"" claude_bridge/blender_manifest.toml || { echo "manifest version != $tag"; exit 1; }
+
+      - name: Build extension
+        run: |
+          mkdir -p site
+          blender/blender --command extension build --source-dir claude_bridge --output-dir site
+          blender/blender --command extension server-generate --repo-dir site --html
+          ls -la site
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zip=$(ls site/*.zip)
+          notes=$(awk -v v="${GITHUB_REF_NAME#v}" '$0 ~ "^## \\[?"v {f=1; next} /^## / && f {exit} f' CHANGELOG.md)
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "$notes"
+          gh release upload "$GITHUB_REF_NAME" "$zip" --clobber
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  pages:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

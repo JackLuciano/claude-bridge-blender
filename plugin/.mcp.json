@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "blender-bridge": {
+      "command": "uvx",
+      "args": ["claude-bridge-blender"]
+    }
+  }
+}

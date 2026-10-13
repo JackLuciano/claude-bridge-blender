@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "claude_bridge"
-version = "0.1.2"
+version = "0.2.0"
 name = "Claude Bridge"
 tagline = "Chat with Claude to build and edit your scene"
 maintainer = "JackLuciano"
@@ -12,6 +12,6 @@ license = ["SPDX:GPL-3.0-or-later"]
 tags = ["User Interface", "Development", "3D View"]
 
 [permissions]
-network = "Local MCP bridge on 127.0.0.1; downloads CC0 textures, HDRIs and models from Poly Haven when asked"
-files = "Saves chats, captures, renders and downloaded assets in Blender's config and temp folders"
+network = "Local MCP bridge on 127.0.0.1; Poly Haven downloads on request"
+files = "Saves chats, captures, renders and downloaded assets"
 clipboard = "Attaches pasted screenshots to chat messages"

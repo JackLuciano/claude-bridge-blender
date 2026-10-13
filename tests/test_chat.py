@@ -159,6 +159,11 @@ def t_skill():
     text = open(path, encoding="utf-8").read()
     assert path.endswith(os.path.join(".claude", "skills", "blender-bridge", "SKILL.md"))
     assert text.startswith("---\nname: blender-bridge\ndescription:")
+    assert claude_bridge.skill_outdated(home) is False
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("old\n")
+    assert claude_bridge.skill_outdated(home) is True
+    assert claude_bridge.skill_outdated(tempfile.mkdtemp()) is None
 
 
 @test

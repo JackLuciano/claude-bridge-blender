@@ -3,7 +3,7 @@
   "name": "io.github.JackLuciano/claude-bridge-blender",
   "title": "Claude Bridge for Blender",
   "description": "Drive a live Blender: compact op batches (one undo step each) and viewport captures.",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "repository": {
     "url": "https://github.com/JackLuciano/claude-bridge-blender",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "claude-bridge-blender",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "runtimeHint": "uvx",
       "transport": { "type": "stdio" },
       "environmentVariables": [
