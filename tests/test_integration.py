@@ -97,6 +97,23 @@ def client():
                     pass
         time.sleep(0.3)
         check("http/garbage/no-token rejected", "Pwn" not in bpy.data.objects, list(bpy.data.objects.keys()))
+
+        # Safe mode: a risky batch waits for Approve/Deny; a denied one tells Claude not to retry.
+        state["safe"] = True
+        res = {}
+        t = threading.Thread(target=lambda: res.update(r=rpc("tools/call", {"name": "bl", "arguments": {"ops": [
+            {"op": "py", "code": "out = 1"}]}})))
+        t.start()
+        deadline = time.time() + 10
+        while not claude_bridge.pending and time.time() < deadline:
+            time.sleep(0.05)
+        check("risky batch held", bool(claude_bridge.pending) and "run Python" in claude_bridge.pending[0][2][0],
+              claude_bridge.pending)
+        state["resolve"] = False
+        t.join(10)
+        txt = res.get("r", {}).get("result", {}).get("content", [{}])[-1].get("text", "")
+        check("denied batch reported", "declined" in txt and "Don't retry" in txt, txt)
+        state["safe"] = False
     except Exception:
         state["errors"].append(traceback.format_exc())
     finally:
@@ -134,7 +151,14 @@ def main():
     claude_bridge.start()
     threading.Thread(target=client, daemon=True).start()
     deadline = time.time() + 120
+    class P:  # stand-in preferences: safe mode toggled by the client thread
+        safe_mode = False
+        port = PORT
+    claude_bridge.prefs = lambda: P
     while not state["done"] and time.time() < deadline:
+        P.safe_mode = state.get("safe", False)
+        if "resolve" in state and claude_bridge.pending:  # main thread answers like the Deny button
+            claude_bridge.resolve(claude_bridge.pending[0], state.pop("resolve"))
         claude_bridge._pump()
         time.sleep(0.01)
     claude_bridge.stop()

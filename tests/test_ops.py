@@ -586,6 +586,21 @@ def t_img_and_assets():
         assert ok and "imported" in out and "base z0.00" in out, out
 
 
+@test
+def t_risky():
+    fresh()
+    bpy.data.objects.new("UserThing", None)
+    bpy.context.scene.collection.objects.link(bpy.data.objects["UserThing"])
+    ok, out = run({"op": "add", "type": "cube", "name": "Mine"})
+    r = ops.describe_risky([{"op": "del", "obj": "Mine"}, {"op": "add"}])
+    assert r == [], r
+    r = ops.describe_risky([{"op": "del", "obj": ["Mine", "UserThing"]}, {"op": "py", "code": "import os"},
+                            {"op": "new"}, {"op": "save", "path": "C:/Windows/x.blend"},
+                            {"op": "export", "path": os.path.join(tempfile.gettempdir(), "ok.glb")},
+                            {"op": "bop", "id": "wm.quit_blender"}])
+    assert len(r) == 5 and "UserThing" in r[0] and "Mine" not in r[0] and r[1].startswith("run Python"), r
+
+
 def main():
     failed = 0
     for fn in TESTS:
