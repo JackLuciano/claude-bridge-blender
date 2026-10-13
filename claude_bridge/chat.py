@@ -454,12 +454,12 @@ def find_claude():
 
 
 def blender_python():
-    """Path of Blender's bundled Python. sys.executable is usually it, but on some macOS setups it points to a
-    path that doesn't exist; then look inside the app bundle next to the Blender binary."""
+    """Absolute path of Blender's bundled Python. sys.executable is relative when Blender was started by a relative
+    path, and the CLI runs in another folder; if it's unusable, look in the install next to the Blender binary."""
     import glob
     if sys.executable and os.path.isfile(sys.executable):
-        return sys.executable
-    exe_dir = os.path.dirname(bpy.app.binary_path)
+        return os.path.abspath(sys.executable)
+    exe_dir = os.path.dirname(os.path.abspath(bpy.app.binary_path))
     pats = [os.path.join(exe_dir, "..", "Resources", "*", "python", "bin", "python3*"),  # macOS bundle
             os.path.join(exe_dir, "*", "python", "bin", "python3*"),  # Linux / Windows portable
             os.path.join(exe_dir, "*", "python", "bin", "python.exe")]

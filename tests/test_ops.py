@@ -228,6 +228,8 @@ def t_export_import_render():
     fresh()
     ok, out = run({"op": "import", "path": p})
     assert ok and "imported 1" in out, out
+    if os.environ.get("CLAUDE_BRIDGE_NO_GPU"):
+        return  # CI machines without OpenGL crash Blender's renderer
     png = os.path.join(d, "r.png")
     ok, out = run({"op": "cam", "loc": [3, -3, 2], "at": [0, 0, 0]},
                   {"op": "add", "type": "sun"},
