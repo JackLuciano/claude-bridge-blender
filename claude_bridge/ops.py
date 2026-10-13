@@ -456,6 +456,7 @@ def op_add(a):
         for p in o.data.polygons:
             p.use_smooth = True
     _to_col(o, a)
+    CREATED.add(o.name)
     return "+ " + summary(o)
 
 
@@ -537,6 +538,7 @@ def op_dup(a):
         if nm:
             c.name = nm
         _to_col(c, a)
+        CREATED.add(c.name)
         out.append(c.name)
     return "+ " + ",".join(out)
 
@@ -1428,6 +1430,7 @@ def op_import(a):
     before = set(bpy.data.objects)
     _file_op(_IMPORT, a)
     new = [o for o in bpy.data.objects if o not in before]
+    CREATED.update(o.name for o in new)
     out = f"imported {len(new)}: " + ",".join(o.name for o in new[:20]) + (f" +{len(new) - 20}" if len(new) > 20 else "")
     roots = [o for o in new if o.parent is None]
     if a.get("col"):
@@ -1692,6 +1695,57 @@ def _ensure_object_mode():
         with bpy.context.temp_override(window=win, area=area, region=region):
             bpy.ops.object.mode_set(mode="OBJECT")
     return f"mode {mode.lower()}>object"
+
+
+CREATED = set()  # names of objects made through the bridge this session (deleting those isn't risky)
+
+
+def _allowed_dirs():
+    from . import chat
+    dirs = [tempfile.gettempdir(), chat.chats_dir()]
+    if bpy.data.filepath:
+        dirs.append(os.path.dirname(bpy.data.filepath))
+    try:
+        dirs.append(chat.inbox_dir())
+        from .assets import cache_dir
+        dirs.append(cache_dir())
+    except Exception:
+        pass
+    return [os.path.normcase(os.path.abspath(d)) for d in dirs]
+
+
+def _outside(path):
+    p = os.path.normcase(os.path.abspath(bpy.path.abspath(path)))
+    return not any(p == d or p.startswith(d + os.sep) for d in _allowed_dirs())
+
+
+def describe_risky(batch):
+    """Short lines for ops that need the user's OK in safe mode (empty list = nothing risky)."""
+    out = []
+    for a in (_normalize(x) for x in batch):
+        o = a.get("op")
+        if o == "py":
+            code = str(a.get("code", "")).strip().replace("\n", " ⏎ ")
+            out.append(f"run Python: {code[:120]}" + ("…" if len(code) > 120 else ""))
+        elif o == "new":
+            out.append("clear the scene (delete all objects)")
+        elif o == "open":
+            out.append(f"open file {a.get('path')} (unsaved changes are lost)")
+        elif o == "del":
+            try:
+                names = [x.name for x in objs(a.get("obj"))]
+            except ValueError:
+                names = []
+            theirs = [n for n in names if n not in CREATED]
+            if theirs:
+                out.append("delete your objects: " + ", ".join(theirs[:8]) + (" …" if len(theirs) > 8 else ""))
+        elif o in ("save", "export", "import", "render", "img") and a.get("path") and _outside(a["path"]):
+            out.append(f"{o} outside the project/temp folders: {a['path']}")
+        elif o == "img" and a.get("dir") and _outside(a["dir"]):
+            out.append(f"read textures from {a['dir']}")
+        elif o == "bop" and str(a.get("id", "")).split(".")[0] in ("wm", "preferences", "script", "screen", "file"):
+            out.append(f"run operator {a.get('id')}")
+    return out
 
 
 def batch_kind(batch):

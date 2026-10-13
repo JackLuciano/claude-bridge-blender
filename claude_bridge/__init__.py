@@ -65,6 +65,17 @@ PUSHES = 0  # undo steps pushed by the bridge; the chat uses it to revert a whol
 JOB_TTL = 600  # seconds a client waits; jobs older than this are dropped instead of run late
 
 
+APPROVAL_TIMEOUT = 300
+pending = []  # safe mode: [(req, reply, lines, t0)] waiting for the user's Approve/Deny
+
+
+def _needs_approval(req):
+    p = prefs()
+    if not (p and p.safe_mode) or "ops" not in req:
+        return []
+    return bridge_ops.describe_risky(req["ops"])
+
+
 def _pump():
     """Timer callback: drain queued requests on the main thread."""
     while True:
@@ -76,10 +87,58 @@ def _pump():
             reply.put({"ok": False, "text": "ERR expired"})
             continue
         try:
+            lines = _needs_approval(req)
+            if lines:
+                pending.append((req, reply, lines, time.time()))
+                continue
             reply.put(_handle_request(req))
         except Exception as e:  # never let the timer die
             reply.put({"ok": False, "text": f"ERR internal: {e}"})
+    for item in [x for x in pending if time.time() - x[3] > APPROVAL_TIMEOUT]:
+        resolve(item, False, "no answer within 5 minutes")
     return 0.02
+
+
+def resolve(item, approve, why="the user declined"):
+    """Answer a held batch: run it, or tell Claude it was refused (and not to retry)."""
+    if item not in pending:
+        return
+    pending.remove(item)
+    req, reply = item[0], item[1]
+    if approve:
+        try:
+            reply.put(_handle_request(req))
+        except Exception as e:
+            reply.put({"ok": False, "text": f"ERR internal: {e}"})
+    else:
+        reply.put({"ok": False, "text": f"ERR {why}: {'; '.join(item[2])}. Don't retry it; ask the user or do it another way."})
+
+
+class CLAUDE_OT_approve(bpy.types.Operator):
+    bl_idname = "claude.bridge_approve"
+    bl_label = "Approve"
+    bl_description = "Run the held batch"
+    approve: bpy.props.BoolProperty(default=True)
+
+    def execute(self, context):
+        if pending:
+            resolve(pending[0], self.approve)
+        return {"FINISHED"}
+
+
+def draw_pending(layout):
+    if not pending:
+        return
+    box = layout.box()
+    box.alert = True
+    box.label(text="Claude wants to:", icon="ERROR")
+    for ln in pending[0][2][:6]:
+        box.label(text=ln[:90])
+    row = box.row(align=True)
+    row.operator("claude.bridge_approve", text="Approve", icon="CHECKMARK").approve = True
+    row.operator("claude.bridge_approve", text="Deny", icon="CANCEL").approve = False
+    if len(pending) > 1:
+        box.label(text=f"+{len(pending) - 1} more waiting")
 
 
 _HTTP = (b"GET ", b"POST", b"PUT ", b"HEAD", b"OPTI", b"DELE", b"PATC", b"CONN", b"TRAC")
@@ -322,7 +381,11 @@ class CLAUDE_PT_panel(bpy.types.Panel):
 
     def draw(self, context):
         col = self.layout.column()
+        draw_pending(col)
         col.label(text=f"{'Running' if _server else 'Stopped'} on {HOST}:{PORT}")
+        p = prefs()
+        if p:
+            col.prop(p, "safe_mode")
         if _server and PORT != getattr(start, "base", PORT):
             col.label(text="Another Blender has the default port;", icon="INFO")
             col.label(text="Claude Code talks to that one.", icon="BLANK1")
@@ -334,7 +397,7 @@ class CLAUDE_PT_panel(bpy.types.Panel):
         row.operator("claude.copy_diagnostics", icon="URL")
 
 
-_classes = (ClaudeBridgePrefs, CLAUDE_OT_toggle, CLAUDE_OT_copy_mcp, CLAUDE_OT_install_skill, CLAUDE_PT_panel)
+_classes = (ClaudeBridgePrefs, CLAUDE_OT_approve, CLAUDE_OT_toggle, CLAUDE_OT_copy_mcp, CLAUDE_OT_install_skill, CLAUDE_PT_panel)
 
 
 def _autostart():

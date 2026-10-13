@@ -5,7 +5,7 @@ import re
 import bpy
 import mathutils
 
-from .ops import _add_material, _check_free, _tree, _wbox, objs, op, summary, v3
+from .ops import CREATED, _add_material, _check_free, _tree, _wbox, objs, op, summary, v3
 
 # ---------------------------------------------------------------- fit (normalize imports)
 
@@ -240,4 +240,5 @@ def op_curve(a):
     o.select_set(True)
     bpy.context.view_layer.objects.active = o
     _add_material(o, a)
+    CREATED.add(o.name)
     return "+ " + summary(o) + (f" pts{len(pts)}" if not lathe else " lathe")

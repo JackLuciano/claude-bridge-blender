@@ -1222,8 +1222,9 @@ class CLAUDE_PT_chat(bpy.types.Panel):
     def draw(self, context):
         wm = context.window_manager
         layout = self.layout
-        from . import doctor
+        from . import doctor, draw_pending
         doctor.draw(layout)
+        draw_pending(layout)
 
         row = layout.row(align=True)
         row.prop(wm, "claude_chat_list", text="")
@@ -1407,7 +1408,10 @@ def _redraw():
         except Exception as e:
             _push("error", f"change summary failed: {e}")
     _was_busy[0] = state["busy"]
-    sig = (len(state["history"]), state["busy"], len(state["attachments"]), state["chat_id"])
+    from . import pending
+    from .doctor import result as doc
+    sig = (len(state["history"]), state["busy"], len(state["attachments"]), state["chat_id"], len(pending),
+           doc["checked"], doc["state"])
     if sig != _last[0]:
         _last[0] = sig
         for win in bpy.context.window_manager.windows:
