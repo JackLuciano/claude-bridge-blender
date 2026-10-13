@@ -1,0 +1,35 @@
+# PyPI package for the MCP server only (stdlib, no bpy), so MCP clients can run
+# `uvx claude-bridge-blender`. The Blender add-on itself ships as the extension zip.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "claude-bridge-blender"
+version = "0.1.2"
+description = "MCP server that drives a live Blender through the Claude Bridge add-on"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.10"
+authors = [{ name = "JackLuciano" }]
+keywords = ["blender", "mcp", "claude", "model-context-protocol", "3d"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+
+[project.urls]
+Homepage = "https://github.com/JackLuciano/claude-bridge-blender"
+Issues = "https://github.com/JackLuciano/claude-bridge-blender/issues"
+
+[project.scripts]
+claude-bridge-blender = "claude_bridge_mcp:main"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.build.targets.wheel.force-include]
+"claude_bridge/mcp_server.py" = "claude_bridge_mcp/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["claude_bridge/mcp_server.py", "README.md", "LICENSE", "pyproject.toml"]

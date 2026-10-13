@@ -112,7 +112,7 @@ def main():
             result = {
                 "protocolVersion": msg.get("params", {}).get("protocolVersion", "2025-06-18"),
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "blender-bridge", "version": "0.1.0"},
+                "serverInfo": {"name": "blender-bridge", "version": "0.1.2"},
             }
         elif method == "tools/list":
             result = {"tools": TOOLS}

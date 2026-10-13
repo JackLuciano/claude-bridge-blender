@@ -1,6 +1,15 @@
 # Claude Bridge for Blender
 
-![Claude Bridge: chat with Claude inside Blender](docs/extensions-listing/featured.png)
+[![Latest release](https://img.shields.io/github/v/release/JackLuciano/claude-bridge-blender?label=download)](https://github.com/JackLuciano/claude-bridge-blender/releases/latest)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+![Blender 4.2+](https://img.shields.io/badge/Blender-4.2%2B-orange)
+
+**[⬇ Download the latest release](https://github.com/JackLuciano/claude-bridge-blender/releases/latest)**: install the
+zip via *Edit ▸ Preferences ▸ Get Extensions ▸ Install from Disk*.
+
+![Demo: one chat message builds a textured reading nook in Blender](docs/demo.gif)
+
+<!-- mcp-name: io.github.JackLuciano/claude-bridge-blender -->
 
 Drive a live Blender with Claude, **from a chat panel inside Blender** or **from Claude Code**, using
 compact, high-level ops instead of throwaway Python scripts. Runs on your normal Claude subscription

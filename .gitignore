@@ -5,3 +5,5 @@ tests/_out/
 *.blend1
 dist/
 tools/_listing/raw/
+tools/_listing/demo/
+pkgdist/
