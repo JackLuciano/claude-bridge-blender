@@ -463,6 +463,38 @@ def t_fit_col_rename_curve():
     assert bpy.data.objects["Pipe"].type == "CURVE" and abs(bpy.data.objects["Pipe"].data.bevel_depth - 0.05) < 1e-6
 
 
+@test
+def t_mesh_edit():
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "Drawer", "dims": [0.6, 0.5, 0.2]},
+                  {"op": "edit", "obj": "Drawer", "sel": "-y", "do": [{"inset": 0.03}, {"extrude": -0.01}]},
+                  {"op": "add", "type": "cube", "name": "Tower", "size": 1},
+                  {"op": "edit", "obj": "Tower", "sel": "+z", "do": [{"extrude": [0, 0, 1]}, {"inset": 0.1}, {"extrude": -0.3}]},
+                  {"op": "add", "type": "cube", "name": "Cuts", "size": 1},
+                  {"op": "edit", "obj": "Cuts", "do": [{"cut": {"axis": "z", "n": 2}}]},
+                  {"op": "add", "type": "cube", "name": "Bev", "size": 1},
+                  {"op": "edit", "obj": "Bev", "do": [{"bevel": {"w": 0.05, "seg": 2}}]},
+                  {"op": "add", "type": "cube", "name": "Two", "size": 1, "mat": {"name": "Body", "color": "#ffffff"}},
+                  {"op": "mat", "name": "Trim", "color": "#ff0000"},
+                  {"op": "edit", "obj": "Two", "sel": {"above": 0.4}, "do": [{"mat": "Trim"}]})
+    assert ok, out
+    tower = bpy.data.objects["Tower"]
+    bpy.context.view_layer.update()
+    assert abs(tower.dimensions.z - 2) < 1e-4, tuple(tower.dimensions)
+    # 6 + 4 inset ring + 4 walls of the recess
+    assert len(bpy.data.objects["Drawer"].data.polygons) == 14, len(bpy.data.objects["Drawer"].data.polygons)
+    bpy.context.view_layer.update()
+    assert abs(bpy.data.objects["Drawer"].dimensions.y - 0.5) < 1e-4  # recessed inwards, not outwards
+    assert len(bpy.data.objects["Cuts"].data.polygons) == 14  # 2 loops add 8 side faces
+    assert len(bpy.data.objects["Bev"].data.polygons) > 6
+    two = bpy.data.objects["Two"]
+    assert sorted({p.material_index for p in two.data.polygons}) == [0, 1] and two.data.materials[1].name == "Trim"
+    ok, out = run({"op": "edit", "obj": "Two", "sel": "+q"})
+    assert not ok and "sel must be" in out
+    ok, out = run({"op": "dup", "obj": "Two", "linked": True, "name": "Two_L"}, {"op": "edit", "obj": "Two", "do": [{"inset": 0.1}]})
+    assert not ok and "shares its mesh" in out
+
+
 def main():
     failed = 0
     for fn in TESTS:

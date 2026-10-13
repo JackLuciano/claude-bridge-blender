@@ -1724,4 +1724,4 @@ def run_batch(batch):
 
 
 # Ops in other modules register themselves into OPS on import.
-from . import anim, build  # noqa: E402,F401
+from . import anim, build, meshedit  # noqa: E402,F401

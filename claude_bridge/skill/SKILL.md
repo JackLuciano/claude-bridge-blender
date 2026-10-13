@@ -41,6 +41,9 @@ JPEG. Every op replies with one short line, so trust the replies and keep image 
   lamp shades and turned legs `curve{lathe:[[r,z],...]}` (profile spun around Z). Much better than stacked cylinders.
 - Downloaded or imported models: `import{path,fit:{height:1.8}}` or `fit{obj,height|longest}` afterwards: real size,
   sitting on the floor.
+- Shape details with `edit` instead of stacking boxes: drawer fronts and panels
+  `edit{obj,sel:"-y",do:[{inset:0.03},{extrude:-0.01}]}`, a raised top `edit{sel:"+z",do:[{extrude:0.2}]}`,
+  loop cuts `{cut:{axis:"z",n:2}}`, two-tone parts `edit{sel:{above:0.8},do:[{mat:"Trim"}]}`.
 - Repeated parts: `dup{obj,n,by}` or `mod{type:"array"}`; symmetric parts: `mod{type:"mirror"}`.
 - Rounded look: `mod{type:"bevel",props:{width:0.02,segments:3}}`; smooth organic: `subsurf` + `smooth:true`.
 - Cut holes: `mod{type:"bool",props:{object:"Cutter",operation:"DIFFERENCE"}}`, then `set{obj:"Cutter",hide:true}`.
