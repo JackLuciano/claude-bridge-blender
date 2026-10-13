@@ -124,6 +124,9 @@ def _client_thread(conn: socket.socket):
                 if not TOKEN or not hmac.compare_digest(str(req.pop("auth", "")), TOKEN):
                     conn.sendall((json.dumps({"ok": False, "text": "ERR bad token: restart Claude Code or the chat"}) + "\n").encode())
                     return
+                if "ops" in req:
+                    from .assets import prefetch
+                    prefetch(req["ops"])  # network downloads here, off Blender's main thread
                 reply: queue.Queue = queue.Queue()
                 _jobs.put((req, reply, time.time() + JOB_TTL))
                 try:

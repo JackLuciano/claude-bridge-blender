@@ -586,6 +586,25 @@ def op_join(a):
 
 # ---------------------------------------------------------------- materials / modifiers
 
+def _bsdf(m):
+    """The Principled BSDF that actually drives the material output; created and linked if there is none
+    (imported materials often have another shader or an unlinked Principled node)."""
+    m.use_nodes = True
+    nt = m.node_tree
+    out = next((n for n in nt.nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output), None) or \
+        next((n for n in nt.nodes if n.type == "OUTPUT_MATERIAL"), None)
+    if out is None:
+        out = nt.nodes.new("ShaderNodeOutputMaterial")
+    surf = out.inputs["Surface"]
+    if surf.is_linked and surf.links[0].from_node.type == "BSDF_PRINCIPLED":
+        return surf.links[0].from_node
+    bsdf = next((n for n in nt.nodes if n.type == "BSDF_PRINCIPLED" and not n.outputs[0].is_linked), None) or \
+        nt.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (out.location.x - 300, out.location.y)
+    nt.links.new(bsdf.outputs[0], surf)
+    return bsdf
+
+
 @op("mat")
 def op_mat(a):
     """a: obj, name, color, metal, rough, emit (color), emit_strength, alpha, transmission, ior, slot.
@@ -596,10 +615,7 @@ def op_mat(a):
     m = bpy.data.materials.get(name)
     if not m:
         m = bpy.data.materials.new(name)
-    m.use_nodes = True
-    bsdf = next((n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
-    if bsdf is None:
-        bsdf = m.node_tree.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf = _bsdf(m)
     inp = bsdf.inputs
     mapping = {
         "color": ("Base Color", color), "metal": ("Metallic", float), "rough": ("Roughness", float),
@@ -658,9 +674,8 @@ def op_tex(a):
         if not m:
             op_mat({"obj": o.name})
             m = o.active_material
-    m.use_nodes = True
+    bsdf = _bsdf(m)
     nt = m.node_tree
-    bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
     # Remove nodes from a previous tex call so re-texturing doesn't pile up.
     for n in [n for n in nt.nodes if n.get("claude_tex")]:
         nt.nodes.remove(n)
@@ -1730,4 +1745,4 @@ def run_batch(batch):
 
 
 # Ops in other modules register themselves into OPS on import.
-from . import anim, build, meshedit, nodes  # noqa: E402,F401
+from . import anim, assets, build, meshedit, nodes  # noqa: E402,F401
