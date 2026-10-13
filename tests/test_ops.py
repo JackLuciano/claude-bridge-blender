@@ -311,6 +311,34 @@ def t_world():
     assert not ok and "hdri must be one of" in out
 
 
+@test
+def t_place_and_check():
+    fresh()
+    ok, out = run({"op": "add", "type": "cube", "name": "Table", "dims": [1.2, 0.8, 0.75], "loc": [0, 0, 2]},
+                  {"op": "mod", "obj": "Table", "type": "bevel", "props": {"width": 0.02}},
+                  {"op": "set", "obj": "Table", "rot": [0, 0, 30]},
+                  {"op": "place", "obj": "Table", "on": "floor"},
+                  {"op": "add", "type": "cylinder", "name": "Mug", "dims": [0.08, 0.08, 0.1], "loc": [3, 3, 5]},
+                  {"op": "place", "obj": "Mug", "on": "Table", "at": "center"})
+    assert ok, out
+    bpy.context.view_layer.update()
+    tlo, thi = ops._wbox([bpy.data.objects["Table"]])
+    mlo, _ = ops._wbox([bpy.data.objects["Mug"]])
+    assert abs(tlo.z) < 1e-4, tlo
+    assert abs(mlo.z - thi.z) < 1e-3, (mlo.z, thi.z)
+    ok, out = run({"op": "check", "only": ["floating", "overlap"]})
+    assert ok and out.startswith("check ok"), out
+    # A raised box reports its gap; two boxes in each other overlap
+    ok, out = run({"op": "add", "type": "cube", "name": "Hover", "size": 1, "loc": [5, 0, 1]},
+                  {"op": "add", "type": "cube", "name": "A1", "size": 1, "loc": [8, 0, 0.5]},
+                  {"op": "add", "type": "cube", "name": "A2", "size": 1, "loc": [8.5, 0, 0.5]},
+                  {"op": "check"})
+    assert ok and "floating Hover 0.5 above the floor" in out, out
+    assert "overlap A1 x A2" in out and "no camera" in out and "no lights" in out, out
+    ok, out = run({"op": "place", "obj": "A2", "against": "A1", "side": "+x"}, {"op": "check", "only": ["overlap"]})
+    assert ok and "A2[mesh] @(9,0,0.5)" in out and out.endswith("check ok (5 objects)"), out
+
+
 def main():
     failed = 0
     for fn in TESTS:

@@ -23,6 +23,8 @@ mat{obj,name,color,metal,rough,alpha,transmission,ior,emit,emit_strength,coat,sp
 tex{obj|mat,kind:wood|fabric|marble|noise|brick|checker|tiles|leather|concrete,color1,color2,scale,bump,rough[min,max]}  (procedural texture)
 mod{obj,type:bevel|subsurf|array|mirror|solidify|bool|decimate|weld|wireframe|screw|displace|remesh|nodes|...,name,props{},apply}
 apply{obj,mod:name|"all",xform:loc|rot|scale|all}
+place{obj,on:"floor"|name,at:[x,y]|"center",against,side:+x|-x|+y|-y,gap}  (exact contact by real bounds)
+check{obj,only:[floating,overlap,frame,scale,images,light,cam]}  (measured problems + fix hints; run before the final look)
 aim{obj,at} cam{name,loc,at,lens,active}
 view{preset:front|back|left|right|top|bottom|camera|persp|ortho, orbit[yaw,pitch], zoom, dist, at, frame:"sel"|"all"|name, shading:solid|material|rendered|wireframe}
 bop{id:"mesh.subdivide",args{},obj,edit,ctx:"view3d"}  (any bpy.ops operator)
@@ -33,7 +35,7 @@ py{code}  (last resort; set `out` to return)"""
 # Mirrors ops.OPS (this process has no bpy); tests/test_integration.py checks they match.
 OP_NAMES = ["scene", "info", "get", "prop", "add", "set", "move", "del", "dup", "select", "join", "mat", "tex", "mod",
             "apply", "aim", "cam", "view", "bop", "py", "undo", "redo", "save", "open", "new", "import", "export",
-            "render", "world"]
+            "render", "world", "place", "check"]
 
 TOOLS = [
     {

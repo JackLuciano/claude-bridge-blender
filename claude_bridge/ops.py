@@ -826,6 +826,205 @@ def op_apply(a):
     return "\n".join(out)
 
 
+# ---------------------------------------------------------------- spatial truth: place / check
+
+def _tree(o):
+    return [o] + list(o.children_recursive)
+
+
+def _wbox(objs_):
+    """World-space (min, max) of the evaluated bounds of objects and all their children."""
+    dg = bpy.context.evaluated_depsgraph_get()
+    pts = []
+    for o in objs_:
+        for x in _tree(o):
+            if x.type in ("MESH", "CURVE", "FONT", "SURFACE", "META") or x.type == "EMPTY" and x.children:
+                eo = x.evaluated_get(dg)
+                pts += [eo.matrix_world @ mathutils.Vector(c) for c in eo.bound_box]
+    if not pts:
+        pts = [o.matrix_world.translation.copy() for o in objs_]
+    lo = mathutils.Vector([min(p[i] for p in pts) for i in range(3)])
+    hi = mathutils.Vector([max(p[i] for p in pts) for i in range(3)])
+    return lo, hi
+
+
+def _bvh(o):
+    """World-space BVH of an object's evaluated mesh (None for non-geometry)."""
+    from mathutils.bvhtree import BVHTree
+    if o.type not in ("MESH", "CURVE", "FONT", "SURFACE", "META"):
+        return None
+    dg = bpy.context.evaluated_depsgraph_get()
+    eo = o.evaluated_get(dg)
+    try:
+        me = eo.to_mesh()
+    except RuntimeError:
+        return None
+    try:
+        mw = eo.matrix_world
+        verts = [mw @ v.co for v in me.vertices]
+        polys = [tuple(p.vertices) for p in me.polygons]
+        return BVHTree.FromPolygons(verts, polys) if polys else None
+    finally:
+        eo.to_mesh_clear()
+
+
+def _surface_z(target, x, y):
+    """Height of target's top surface at (x, y), by a downward ray; falls back to its bounding-box top."""
+    lo, hi = _wbox([target])
+    for o in _tree(target):
+        t = _bvh(o)
+        if t:
+            hit = t.ray_cast(mathutils.Vector((x, y, hi.z + 1)), mathutils.Vector((0, 0, -1)))
+            if hit[0] is not None:
+                return hit[0].z
+    return hi.z
+
+
+def _move_world(o, delta):
+    mw = o.matrix_world.copy()
+    mw.translation += delta
+    o.matrix_world = mw
+
+
+_SIDES = {"+x": (0, 1), "-x": (0, -1), "+y": (1, 1), "-y": (1, -1), "+z": (2, 1), "-z": (2, -1)}
+
+
+@op("place")
+def op_place(a):
+    """Put objects exactly in contact, using real (evaluated, world) bounds.
+    a: obj, on ('floor' | object name: rest on its top surface), at ([x,y] | 'center' of the target),
+    against (object name) + side (+x|-x|+y|-y: which side of it), gap (m, default 0)."""
+    gap = float(a.get("gap", 0))
+    out = []
+    for o in objs(a.get("obj")):
+        bpy.context.view_layer.update()
+        lo, hi = _wbox([o])
+        c = (lo + hi) / 2
+        delta = mathutils.Vector()
+        target = None
+        on = a.get("on")
+        if on and on != "floor":
+            target = obj(on)
+        if "at" in a:
+            at = a["at"]
+            if at == "center":
+                if target is None:
+                    raise ValueError("at:'center' needs on:<object>")
+                tlo, thi = _wbox([target])
+                at = [(tlo.x + thi.x) / 2, (tlo.y + thi.y) / 2]
+            if not isinstance(at, (list, tuple)) or len(at) < 2:
+                raise ValueError("'at' needs [x,y] or 'center'")
+            delta.x, delta.y = at[0] - c.x, at[1] - c.y
+        if a.get("against"):
+            other = obj(a["against"])
+            side = a.get("side", "+x")
+            if side not in _SIDES:
+                raise ValueError(f"side must be one of {','.join(_SIDES)}")
+            ax, sgn = _SIDES[side]
+            olo, ohi = _wbox([other])
+            delta[ax] = (ohi[ax] + gap - lo[ax]) if sgn > 0 else (olo[ax] - gap - hi[ax])
+        if on:
+            x, y = c.x + delta.x, c.y + delta.y
+            base = 0.0 if on == "floor" else _surface_z(target, x, y)
+            delta.z = base + gap - lo.z
+        _move_world(o, delta)
+        bpy.context.view_layer.update()
+        out.append(summary(o))
+    return "\n".join(out)
+
+
+def _roots(scope):
+    """Top-level geometry objects to check (children count as part of their root)."""
+    obs = objs(scope) if scope not in (None, "all") else [o for o in bpy.context.scene.objects if o.visible_get()]
+    return [o for o in obs if o.parent is None and any(x.type == "MESH" for x in _tree(o))]
+
+
+_CHECKS = ("floating", "overlap", "frame", "scale", "images", "light", "cam")
+
+
+@op("check", ro=True)
+def op_check(a):
+    """Measured facts instead of guessing from an image. a: obj ('all' default), only [floating, overlap, frame,
+    scale, images, light, cam], max (lines, default 15). Each line ends with a fix hint."""
+    only = a.get("only") or _CHECKS
+    lim = int(a.get("max", 15))
+    sc = bpy.context.scene
+    bpy.context.view_layer.update()
+    roots = _roots(a.get("obj", "all"))
+    issues = []
+    if "floating" in only:
+        for o in roots:
+            lo, hi = _wbox([o])
+            if lo.z < 0.002:
+                continue
+            c = (lo + hi) / 2
+            below = None
+            best = None
+            for other in roots:
+                if other is o:
+                    continue
+                olo, ohi = _wbox([other])
+                if olo.x <= c.x <= ohi.x and olo.y <= c.y <= ohi.y and ohi.z <= lo.z + 0.002:
+                    z = _surface_z(other, c.x, c.y)
+                    if z <= lo.z + 0.002 and (best is None or z > best):
+                        best, below = z, other
+            gap = lo.z - (best if best is not None else 0.0)
+            if gap > 0.002:
+                where = f"above {below.name}" if below else "above the floor"
+                issues.append(f"floating {o.name} {_r(gap, 3)} {where} -> place{{obj:'{o.name}',on:'{below.name if below else 'floor'}'}}")
+    if "overlap" in only:
+        boxes = [(o, *_wbox([o])) for o in roots]
+        trees = {}
+        for i, (o1, lo1, hi1) in enumerate(boxes):
+            for o2, lo2, hi2 in boxes[i + 1:]:
+                if any(hi1[k] < lo2[k] + 1e-4 or hi2[k] < lo1[k] + 1e-4 for k in range(3)):
+                    continue
+                n = 0
+                for x1 in _tree(o1):
+                    for x2 in _tree(o2):
+                        t1 = trees.setdefault(x1.name, _bvh(x1))
+                        t2 = trees.setdefault(x2.name, _bvh(x2))
+                        if t1 and t2:
+                            n += len(t1.overlap(t2))
+                # Surface tests miss coplanar faces and one object fully inside another: also use bounds depth.
+                depth = min(min(hi1[k], hi2[k]) - max(lo1[k], lo2[k]) for k in range(3))
+                if n or depth > 0.01:
+                    how = f"{n} face pairs" if n else f"{_r(depth, 3)} m deep"
+                    issues.append(f"overlap {o1.name} x {o2.name} ({how}) -> move one, or place{{against}}")
+    if "frame" in only and sc.camera:
+        from bpy_extras.object_utils import world_to_camera_view
+        for o in roots:
+            lo, hi = _wbox([o])
+            corners = [mathutils.Vector((x, y, z)) for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
+            vs = [world_to_camera_view(sc, sc.camera, p) for p in corners]
+            inside = [0 <= v.x <= 1 and 0 <= v.y <= 1 and v.z > 0 for v in vs]
+            if any(inside) and not all(inside):
+                issues.append(f"cut off {o.name} by camera frame -> move the camera back or lower lens")
+            elif not any(inside) and all(v.z > 0 for v in vs):
+                pass  # entirely off-screen: usually intentional
+    if "scale" in only:
+        for o in (x for r in roots for x in _tree(r)):
+            s = o.scale
+            if max(s) > 1.001 * min(s) and any(m.type in ("BEVEL", "SOLIDIFY") for m in o.modifiers):
+                issues.append(f"scale {o.name} {_vec(s)} with bevel/solidify: widths are uneven -> set{{obj:'{o.name}',dims:{_vec(o.dimensions).replace('(', '[').replace(')', ']')}}}")
+    if "images" in only:
+        for img in bpy.data.images:
+            if img.source == "FILE" and img.filepath and not img.packed_file and not os.path.exists(bpy.path.abspath(img.filepath)):
+                issues.append(f"missing image {img.name}: {img.filepath} -> re-link or remove the texture")
+    if "light" in only and roots:
+        w = sc.world
+        lit = any(o.type == "LIGHT" and o.visible_get() for o in sc.objects) or (
+            w and w.use_nodes and any(n.type in ("TEX_ENVIRONMENT", "TEX_SKY") for n in w.node_tree.nodes))
+        if not lit:
+            issues.append("no lights and no HDRI/sky -> world{hdri:'interior'} or add lights")
+    if "cam" in only and roots and not sc.camera:
+        issues.append("no camera -> cam{loc,at,lens}")
+    if not issues:
+        return f"check ok ({len(roots)} objects)"
+    more = len(issues) - lim
+    return "\n".join(issues[:lim] + ([f"+{more} more"] if more > 0 else []))
+
+
 # ---------------------------------------------------------------- camera / view
 
 @op("aim")
