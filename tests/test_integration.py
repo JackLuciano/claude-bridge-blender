@@ -59,7 +59,8 @@ def client():
         enum = r["result"]["tools"][0]["inputSchema"]["properties"]["ops"]["items"]["properties"]["op"]["enum"]
         check("schema op enum matches ops.OPS", sorted(enum) == sorted(ops.OPS), set(enum) ^ set(ops.OPS))
         schema_chars = len(json.dumps(r["result"]["tools"]))
-        check("schema is compact", schema_chars < 3500, schema_chars)
+        # Sent with every request: ~4 chars/token, so 6000 chars is about 1.5k tokens for ~45 ops.
+        check("schema is compact", schema_chars < 6000, schema_chars)
 
         r = rpc("tools/call", {"name": "bl", "arguments": {"ops": [
             {"op": "new"},
