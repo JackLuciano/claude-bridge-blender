@@ -92,6 +92,29 @@ def t_material():
 
 
 @test
+def t_tex_all_kinds():
+    fresh()
+    for k in ops._TEX_KINDS:
+        ok, out = run({"op": "add", "type": "cube", "name": f"T_{k}", "mat": {"name": f"M_{k}"}},
+                      {"op": "tex", "obj": f"T_{k}", "kind": k, "scale": 3})
+        assert ok and f"tex {k}" in out, out
+        nt = bpy.data.materials[f"M_{k}"].node_tree
+        bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
+        assert bsdf.inputs["Base Color"].is_linked and bsdf.inputs["Roughness"].is_linked, k
+    # Wood grain follows the longest side: a flat floor along X/Y, not Z
+    ok, out = run({"op": "add", "type": "plane", "name": "Floor", "size": 1, "dims": [6, 4, 0]},
+                  {"op": "tex", "obj": "Floor", "kind": "wood"})
+    wave = next(n for n in bpy.data.objects["Floor"].active_material.node_tree.nodes if n.type == "TEX_WAVE")
+    assert ok and wave.rings_direction == "X", (out, wave.rings_direction)
+    # Re-texturing replaces nodes instead of piling them up
+    n_before = len(bpy.data.materials["M_wood"].node_tree.nodes)
+    ok, out = run({"op": "tex", "mat": "M_wood", "kind": "marble"})
+    assert ok and len(bpy.data.materials["M_wood"].node_tree.nodes) <= n_before + 1, out
+    ok, out = run({"op": "tex", "obj": "T_wood", "kind": "plaid"})
+    assert not ok and "kind must be one of" in out
+
+
+@test
 def t_modifiers_and_apply():
     fresh()
     ok, out = run({"op": "add", "type": "cube", "name": "M"},
@@ -161,6 +184,9 @@ def t_bop_and_py():
                   {"op": "bop", "id": "object.shade_smooth", "obj": "B"},
                   {"op": "py", "code": "out = len(bpy.data.objects)"})
     assert ok and "py 1" in out, out
+    # Regression: a non-numeric tuple crashed fmt() with ValueError
+    ok, out = run({"op": "py", "code": "out = ('Claude', True, 3)"})
+    assert ok and "Claude" in out, out
 
 
 @test

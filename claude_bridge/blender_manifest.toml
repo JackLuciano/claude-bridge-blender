@@ -1,9 +1,9 @@
 schema_version = "1.0.0"
 
 id = "claude_bridge"
-version = "0.1.1"
+version = "0.1.2"
 name = "Claude Bridge"
-tagline = "Compact op-based control channel for Claude Code via MCP"
+tagline = "Chat with Claude to build and edit your scene"
 maintainer = "JackLuciano"
 website = "https://github.com/JackLuciano/claude-bridge-blender"
 type = "add-on"

@@ -16,9 +16,11 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_listing", "raw"
 os.makedirs(OUT, exist_ok=True)
 
 TURNS = [
-    ("1_build", "Build a cozy living room: floor and two walls in a corner, a sofa, a coffee table with four legs, "
-                "a floor lamp with a warm light, a rug, a bookshelf, a plant, and a camera looking into the room. "
-                "Real-world sizes, distinct materials."),
+    ("1_build", "Build a detailed cozy living room: wooden floor and two walls in a corner, a sofa with seat and back "
+                "cushions, a coffee table with four legs, a floor lamp with a warm light, a rug, a bookshelf with "
+                "books, a plant, and a camera looking into the room. Real-world sizes. Make it look high quality: "
+                "bevel every hard edge, subdivide the soft furniture, smooth round parts, and use procedural textures "
+                "(wood grain, fabric, etc.) instead of flat colours. Check that every table leg touches the floor."),
     ("2_edit", "Make the sofa deep blue velvet, add two cushions on it, and put a mug on the coffee table."),
     ("3_image", "Here's the current view. What one change would make it feel cozier? Do it."),
 ]
@@ -60,6 +62,10 @@ def screenshot(name):
     win, area, ui = view3d()
     with bpy.context.temp_override(window=win):
         bpy.ops.screen.screenshot(filepath=path)
+    # 3D area bounds (bottom-left origin) so the composer can crop to viewport + chat.
+    import json
+    with open(os.path.join(OUT, "area.json"), "w") as f:
+        json.dump({"x": area.x, "y": area.y, "w": area.width, "h": area.height, "win_h": win.height}, f)
     print("ASSET", path)
 
 
@@ -67,7 +73,10 @@ def tick():
     c = chat()
     s = S["step"]
     win, area, ui = view3d()
-    if s == 0:  # dismiss splash, clean scene
+    if s == 0:  # dismiss splash, clean scene, bigger UI for legible previews (never saved to prefs)
+        prefs = bpy.context.preferences
+        prefs.use_preferences_save = False
+        prefs.view.ui_scale = 1.25
         win.event_simulate(type="ESC", value="PRESS", x=10, y=10)
         win.event_simulate(type="ESC", value="RELEASE", x=10, y=10)
         for o in list(bpy.data.objects):
@@ -85,6 +94,7 @@ def tick():
             return 0.5
         name, prompt = TURNS[S["turn"]]
         if name == "3_image":
+            c.new_chat()  # fresh chat so the preview shows the image turn itself
             c.capture_viewport()
         c.send(prompt, "opus")
         S["step"], S["t"] = 3, time.time()
@@ -110,6 +120,11 @@ def tick():
         except TypeError:
             sc.render.engine = "BLENDER_EEVEE"
         sc.render.resolution_x, sc.render.resolution_y, sc.render.resolution_percentage = 1920, 1080, 100
+        if hasattr(sc, "eevee"):
+            sc.eevee.taa_render_samples = 128
+            for attr in ("use_raytracing", "use_shadows"):
+                if hasattr(sc.eevee, attr):
+                    setattr(sc.eevee, attr, True)
         sc.render.filepath = os.path.join(OUT, "render.png")
         if sc.camera:
             bpy.ops.render.render(write_still=True)

@@ -131,7 +131,7 @@ def fmt(v):
     if hasattr(v, "__len__") and not isinstance(v, str) and len(v) <= 16:
         try:
             return _vec(v)
-        except TypeError:
+        except (TypeError, ValueError):  # not numeric, e.g. a tuple of strings
             pass
     if hasattr(v, "name"):
         return v.name
@@ -468,6 +468,120 @@ def op_mat(a):
     return f"mat {m.name}"
 
 
+_TEX_KINDS = ("wood", "fabric", "marble", "noise", "brick", "checker", "tiles", "leather", "concrete")
+
+
+@op("tex")
+def op_tex(a):
+    """Procedural texture into a material's Base Color (+ roughness variation and bump).
+    a: obj or mat (material name), kind (wood|fabric|marble|noise|brick|checker|tiles|leather|concrete),
+    color1, color2, scale (default 5), bump (0-1, default 0.3), rough [min,max]."""
+    kind = a.get("kind", "noise")
+    if kind not in _TEX_KINDS:
+        raise ValueError(f"kind must be one of {','.join(_TEX_KINDS)}")
+    grain = "X"  # wood grain runs along the object's longest side (a floor is flat, a table leg is tall)
+    if a.get("mat"):
+        m = bpy.data.materials.get(a["mat"])
+        if not m:
+            raise ValueError(f"no material '{a['mat']}'")
+    else:
+        o = obj(a.get("obj"))
+        d = o.dimensions
+        grain = "XYZ"[max(range(3), key=lambda i: d[i])]
+        m = o.active_material
+        if not m:
+            op_mat({"obj": o.name})
+            m = o.active_material
+    m.use_nodes = True
+    nt = m.node_tree
+    bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
+    # Remove nodes from a previous tex call so re-texturing doesn't pile up.
+    for n in [n for n in nt.nodes if n.get("claude_tex")]:
+        nt.nodes.remove(n)
+
+    def node(t, x, y):
+        n = nt.nodes.new(t)
+        n["claude_tex"] = True
+        n.location = (bsdf.location.x - x, bsdf.location.y + y)
+        return n
+
+    defaults = {"wood": ("#6b4226", "#3d2414"), "fabric": ("#3b4a7a", "#2c3860"), "marble": ("#eeeeee", "#8a8a8a"),
+                "noise": ("#888888", "#555555"), "brick": ("#9c4a2f", "#d8d0c4"), "checker": ("#e0e0e0", "#202020"),
+                "tiles": ("#dcdcdc", "#9a9a9a"), "leather": ("#5a3420", "#3a2012"), "concrete": ("#9a9a96", "#7a7a76")}
+    c1 = color(a.get("color1", defaults[kind][0]))
+    c2 = color(a.get("color2", defaults[kind][1]))
+    scale = float(a.get("scale", 5))
+
+    coord = node("ShaderNodeTexCoord", 1100, 0)
+    mapping = node("ShaderNodeMapping", 900, 0)
+    nt.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
+    ramp = node("ShaderNodeValToRGB", 350, 0)
+    ramp.color_ramp.elements[0].color = c1
+    ramp.color_ramp.elements[1].color = c2
+    fac = None
+    if kind == "wood":
+        wave = node("ShaderNodeTexWave", 650, 0)
+        wave.wave_type = "RINGS"
+        wave.rings_direction = grain
+        wave.inputs["Scale"].default_value = scale * 0.6
+        wave.inputs["Distortion"].default_value = 6
+        wave.inputs["Detail"].default_value = 4
+        nt.links.new(mapping.outputs["Vector"], wave.inputs["Vector"])
+        fac = wave.outputs["Fac"]
+    elif kind in ("fabric", "leather", "concrete", "noise"):
+        tex = node("ShaderNodeTexNoise", 650, 0)
+        tex.inputs["Scale"].default_value = scale * {"fabric": 60, "leather": 25, "concrete": 8, "noise": 1}[kind]
+        tex.inputs["Detail"].default_value = 8 if kind != "fabric" else 2
+        nt.links.new(mapping.outputs["Vector"], tex.inputs["Vector"])
+        fac = tex.outputs["Fac"]
+        if kind == "fabric":
+            ramp.color_ramp.elements[0].position, ramp.color_ramp.elements[1].position = 0.35, 0.65
+    elif kind == "marble":
+        wave = node("ShaderNodeTexWave", 650, 0)
+        wave.inputs["Detail"].default_value = 10
+        wave.inputs["Scale"].default_value = scale * 0.5
+        wave.inputs["Distortion"].default_value = 12
+        nt.links.new(mapping.outputs["Vector"], wave.inputs["Vector"])
+        fac = wave.outputs["Fac"]
+        ramp.color_ramp.interpolation = "EASE"
+    elif kind == "brick":
+        tex = node("ShaderNodeTexBrick", 650, 0)
+        tex.inputs["Scale"].default_value = scale
+        tex.inputs["Color1"].default_value = c1
+        tex.inputs["Color2"].default_value = color("#8a3e26")
+        tex.inputs["Mortar"].default_value = c2
+        nt.links.new(mapping.outputs["Vector"], tex.inputs["Vector"])
+        nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+        fac = tex.outputs["Fac"]
+    else:  # checker, tiles
+        tex = node("ShaderNodeTexChecker", 650, 0)
+        tex.inputs["Scale"].default_value = scale
+        tex.inputs["Color1"].default_value = c1
+        tex.inputs["Color2"].default_value = c2
+        nt.links.new(mapping.outputs["Vector"], tex.inputs["Vector"])
+        nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+        fac = tex.outputs["Fac"]
+    if kind not in ("brick", "checker", "tiles"):
+        nt.links.new(fac, ramp.inputs["Fac"])
+        nt.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
+    # Roughness variation
+    lo, hi = a.get("rough", [0.35, 0.7] if kind != "marble" else [0.05, 0.2])
+    rmap = node("ShaderNodeMapRange", 350, -260)
+    rmap.inputs["To Min"].default_value, rmap.inputs["To Max"].default_value = lo, hi
+    nt.links.new(fac, rmap.inputs["Value"])
+    nt.links.new(rmap.outputs["Result"], bsdf.inputs["Roughness"])
+    # Bump
+    strength = float(a.get("bump", 0.3))
+    if strength > 0:
+        bump = node("ShaderNodeBump", 350, -480)
+        bump.inputs["Strength"].default_value = strength
+        bump.inputs["Distance"].default_value = 0.02
+        nt.links.new(fac, bump.inputs["Height"])
+        nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    m.diffuse_color = tuple((c1[i] + c2[i]) / 2 for i in range(3)) + (1,)
+    return f"tex {kind} on {m.name}"
+
+
 _MOD_ALIASES = {"bevel": "BEVEL", "subsurf": "SUBSURF", "subd": "SUBSURF", "array": "ARRAY", "mirror": "MIRROR",
                 "solidify": "SOLIDIFY", "bool": "BOOLEAN", "boolean": "BOOLEAN", "decimate": "DECIMATE",
                 "weld": "WELD", "wireframe": "WIREFRAME", "screw": "SCREW", "displace": "DISPLACE",
@@ -753,11 +867,21 @@ def look(a):
     r.resolution_x, r.resolution_y = (size, int(size / ratio)) if ratio >= 1 else (int(size * ratio), size)
     r.resolution_percentage = 100
     r.filepath = raw
+    # Render through the viewport so its shading applies, and in material preview use the scene's own
+    # lights and world instead of the studio HDRI, otherwise lighting changes are invisible to Claude.
+    sh, r3d = space.shading, space.region_3d
+    saved = (sh.use_scene_lights, sh.use_scene_world, r3d.view_perspective, space.overlay.show_overlays)
+    space.overlay.show_overlays = False  # no grid, outlines or gizmos in the capture
+    if sh.type == "MATERIAL":
+        sh.use_scene_lights = sh.use_scene_world = True
+    if a.get("cam") and sc.camera:
+        r3d.view_perspective = "CAMERA"
     try:
         with bpy.context.temp_override(window=win, area=area, region=region):
-            bpy.ops.render.opengl(write_still=True, view_context=not a.get("cam"))
+            bpy.ops.render.opengl(write_still=True, view_context=True)
     finally:
         r.resolution_x, r.resolution_y, r.resolution_percentage, r.filepath = old
+        sh.use_scene_lights, sh.use_scene_world, r3d.view_perspective, space.overlay.show_overlays = saved
     img = bpy.data.images.load(raw, check_existing=False)
     try:
         w, h = img.size

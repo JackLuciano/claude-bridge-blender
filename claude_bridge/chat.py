@@ -275,10 +275,18 @@ _watcher = None
 def _paste_watch():
     try:
         if _watcher and _watcher.poll():
-            paste_image()
+            # Reading the clipboard spawns PowerShell (1-3 s): never block Blender's main thread on it.
+            threading.Thread(target=_paste_bg, daemon=True).start()
     except Exception as e:
         _push("error", f"paste failed: {e}")
     return 0.03
+
+
+def _paste_bg():
+    try:
+        paste_image()
+    except Exception as e:
+        _push("error", f"paste failed: {e}")
 
 
 def paste_image():
@@ -441,6 +449,15 @@ def send(prompt, model="opus"):
 
 # ---------------------------------------------------------------- UI
 
+def _plain(text):
+    """Blender labels can't render markdown: drop emphasis/code markers and turn bullets into •."""
+    import re
+    text = re.sub(r"\*\*(.+?)\*\*|__(.+?)__", lambda m: m.group(1) or m.group(2), text)
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    text = re.sub(r"^\s*#{1,6}\s*", "", text, flags=re.M)
+    return re.sub(r"^(\s*)[-*]\s+", r"\1• ", text, flags=re.M)
+
+
 _ICON = {"user": "USER", "claude": "LIGHT", "tool": "TOOL_SETTINGS", "error": "ERROR", "info": "INFO"}
 _PREFIX = {"user": "You", "claude": "Claude", "tool": "tool", "error": "error", "info": "info"}
 
@@ -592,20 +609,33 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         row.operator("claude.chat_new", text="", icon="ADD")
         row.operator("claude.chat_delete", text="", icon="TRASH")
 
-        width = max(20, int(context.region.width / (7.5 * context.preferences.view.ui_scale)))
+        scale = context.preferences.view.ui_scale
+        width = max(20, int(context.region.width / (7.5 * scale)))
         box = layout.box()
         with _lock:
-            hist = list(state["history"][-30:])
+            hist = list(state["history"][-60:])
         if not hist:
             box.label(text="Ask for anything, e.g. 'add a wooden table'", icon="INFO")
-        col = box.column(align=True)
+        # Panels don't auto-scroll: show only the newest lines that fit, so the latest reply is always visible.
+        lines = []
         for role, text in hist:
+            text = _plain(text)
             first = True
             for para in text.splitlines() or [""]:
                 for line in textwrap.wrap(para, width) or [""]:
-                    col.label(text=line, icon=_ICON[role] if first else "BLANK1")
+                    lines.append((line, _ICON[role] if first else "BLANK1"))
                     first = False
-            col.separator(factor=0.5)
+            lines.append(None)  # gap between messages
+        fit = max(8, int((context.region.height - 300 * scale) / (20 * scale)))
+        col = box.column(align=True)
+        if len(lines) > fit:
+            col.label(text=f"… {len(lines) - fit} earlier lines (Copy chat for all)", icon="TRIA_UP")
+            lines = lines[-fit:]
+        for item in lines:
+            if item is None:
+                col.separator(factor=0.5)
+            else:
+                col.label(text=item[0], icon=item[1])
         if state["busy"]:
             box.label(text="Claude is working…", icon="SORTTIME")
 

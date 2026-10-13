@@ -1,5 +1,7 @@
 # Claude Bridge for Blender
 
+![Claude Bridge: chat with Claude inside Blender](docs/extensions-listing/featured.png)
+
 Drive a live Blender with Claude, **from a chat panel inside Blender** or **from Claude Code**, using
 compact, high-level ops instead of throwaway Python scripts. Runs on your normal Claude subscription
 (Pro/Max) through the Claude Code CLI. No API key is needed.
@@ -113,6 +115,7 @@ Ops run in order, stop at the first error (reported with its index), and the who
 | `set` / `move` | absolute / relative transforms, `hide`, `parent`, `smooth`, `props{dotted.attr: val}` |
 | `del`, `dup`, `select`, `join` | delete / duplicate (`n`, `by`, `linked`) / select / join |
 | `mat` | `obj`, `name`, `color`, `metal`, `rough`, `alpha`, `transmission`, `ior`, `emit`, `emit_strength`, `coat`, `spec`, `slot` |
+| `tex` | procedural texture on an object's or named material: `kind` (wood, fabric, marble, noise, brick, checker, tiles, leather, concrete), `color1`, `color2`, `scale`, `bump`, `rough [min,max]` |
 | `mod` / `apply` | add or edit modifiers (bevel, subsurf, array, mirror, solidify, bool, …), apply modifiers or transforms |
 | `aim`, `cam` | point at an object or point; create/update the scene camera |
 | `view` | `preset`, `orbit [yaw,pitch]`, `zoom`, `dist`, `at`, `frame`, `shading`: drives the user's viewport |

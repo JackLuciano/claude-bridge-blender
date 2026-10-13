@@ -20,6 +20,7 @@ add{type:cube|sphere|ico|cylinder|cone|plane|circle|torus|monkey|grid|empty|text
 set{obj,loc,rot,scale,dims,name,hide,parent,smooth,props{dotted.attr:val}}  move{obj,by,rot,scale}
 del{obj} dup{obj,n,by,linked,name} select{obj|"all"|"none",active,add} join{obj}
 mat{obj,name,color,metal,rough,alpha,transmission,ior,emit,emit_strength,coat,spec,slot}
+tex{obj|mat,kind:wood|fabric|marble|noise|brick|checker|tiles|leather|concrete,color1,color2,scale,bump,rough[min,max]}  (procedural texture)
 mod{obj,type:bevel|subsurf|array|mirror|solidify|bool|decimate|weld|wireframe|screw|displace|remesh|nodes|...,name,props{},apply}
 apply{obj,mod:name|"all",xform:loc|rot|scale|all}
 aim{obj,at} cam{name,loc,at,lens,active}
@@ -29,7 +30,7 @@ render{path,res[w,h],pct,samples,engine} import{path} export{path} save{path} op
 py{code}  (last resort; set `out` to return)"""
 
 # Mirrors ops.OPS (this process has no bpy); tests/test_integration.py checks they match.
-OP_NAMES = ["scene", "info", "get", "prop", "add", "set", "move", "del", "dup", "select", "join", "mat", "mod",
+OP_NAMES = ["scene", "info", "get", "prop", "add", "set", "move", "del", "dup", "select", "join", "mat", "tex", "mod",
             "apply", "aim", "cam", "view", "bop", "py", "undo", "redo", "save", "open", "new", "import", "export",
             "render"]
 

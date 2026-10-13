@@ -25,6 +25,12 @@ JPEG. Every op replies with one short line, so trust the replies and keep image 
 - Walls: thin boxes (0.1 m) placed at the floor edge, with z = wall height / 2.
 - Materials: `mat:{"name":"Oak","color":"#a0703c","rough":0.6}` on `add`; reuse later as `mat:"Oak"`.
   Metals: `metal:1, rough:0.2–0.4`. Glass: `transmission:1, rough:0`. Emissive: `emit:"#ffcc88", emit_strength:5`.
+- **Texture surfaces** instead of flat colours: `tex{obj,kind:"wood",color1,color2,scale}` for floors and tables,
+  `fabric` for sofas and rugs, `marble`/`tiles` for counters, `brick`/`concrete` for walls, `leather` for chairs.
+  Apply it after the object has its material; one `tex` per material is enough (shared materials share it).
+- **Detail**: bevel every hard-surface box (`width` 0.005–0.02, `segments` 3); soft furniture (cushions, sofa) gets
+  `subsurf` levels 2 with a bevel or a slightly smaller inner box so it doesn't melt into a blob; `smooth:true` on
+  round things. Cylinders: `args:{vertices:48}` for smooth curves.
 - Name every object meaningfully (`Sofa_Seat`, `Table_Leg_1`); parent parts with `set{parent}` for grouping.
 - Repeated parts: `dup{obj,n,by}` or `mod{type:"array"}`; symmetric parts: `mod{type:"mirror"}`.
 - Rounded look: `mod{type:"bevel",props:{width:0.02,segments:3}}`; smooth organic: `subsurf` + `smooth:true`.

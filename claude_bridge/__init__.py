@@ -9,7 +9,7 @@ short text line per op. Every batch is a single undo step.
 bl_info = {
     "name": "Claude Bridge",
     "author": "JackLuciano",
-    "version": (0, 1, 1),
+    "version": (0, 1, 2),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Claude",
     "description": "Compact op-based control channel for Claude Code (MCP)",

@@ -139,6 +139,11 @@ def t_chat_list_enum():
 
 
 @test
+def t_plain_markdown():
+    assert chat._plain("- **Lamp:** the `bevel` op\n## Done") == "• Lamp: the bevel op\nDone"
+
+
+@test
 def t_skill():
     body = chat.skill_body()
     assert body.startswith("# Working in Blender") and "name:" not in body.splitlines()[0]
