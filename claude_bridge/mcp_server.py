@@ -45,7 +45,8 @@ apply{obj,mod:name|"all",xform:loc|rot|scale|all}
 edit{obj,sel:all|keep|+z|-y..|{normal,tol}|{mat}|{above}|[ids],do:[{extrude:d|[x,y,z]},{inset:w|{w,depth}},{bevel:{w,seg}},{cut:{axis,n}},{bisect},{delete},{move},{scale},{subdivide},{mat},{smooth}]}  (steps chain on new faces)
 room{pts[[x,y]..],h,t,openings[{wall:i,at,w,h,sill(0=door)}],name,floor,ceiling,wall_mat,floor_mat}  (walls+doors+windows+glass)
 place{obj,on:"floor"|name,at:[x,y]|"center",against,side:+x|-x|+y|-y,gap}  (exact contact by real bounds)
-check{obj,only:[floating,overlap,frame,scale,images,light,cam]}  (measured problems + fix hints; run before the final look)
+check{obj,only:[floating,overlap,frame,scale,images,light,cam]|["game"],budget}  (measured problems + fix hints; run before the final look)
+gameprep{obj,engine:unity|unreal|godot,uv,apply,lods,collision,names}  export{path,preset:unity|unreal|godot,obj,per:"object"}
 aim{obj,at} cam{name,loc,at,lens,active}
 key{obj,f,loc,rot,scale,props{},interp:linear|bezier|constant|bounce|...,ease:in|out|in_out}
 anim{start,end,fps,preset:turntable|spin|pop_in|bounce|float,obj,turns,stagger,height}
@@ -65,7 +66,7 @@ INSTRUCTIONS = ("Controls the user's live Blender through the Claude Bridge add-
 # Mirrors ops.OPS (this process has no bpy); tests/test_integration.py checks they match.
 OP_NAMES = ["scene", "info", "get", "prop", "add", "set", "move", "del", "dup", "select", "join", "mat", "tex", "mod",
             "apply", "aim", "cam", "view", "bop", "py", "undo", "redo", "save", "open", "new", "import", "export",
-            "render", "world", "place", "check", "api", "key", "anim", "con", "fit", "col", "rename", "curve", "edit", "nodes", "img", "asset", "room"]
+            "render", "world", "place", "check", "api", "key", "anim", "con", "fit", "col", "rename", "curve", "edit", "nodes", "img", "asset", "room", "gameprep"]
 
 TOOLS = [
     {
