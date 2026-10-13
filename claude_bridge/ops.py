@@ -166,17 +166,41 @@ def summary(o):
 
 @op("scene", ro=True)
 def op_scene(a):
-    """Compact list of objects. a: filter (substring), type."""
+    """Compact list of objects. a: filter (substring), type, limit (default 60).
+    Numbered runs (Rock.001 ... Rock.250) collapse into one line so big imports stay cheap."""
+    import re
     f, t = a.get("filter"), a.get("type")
+    limit = int(a.get("limit", 60))
     sc = bpy.context.scene
     act = bpy.context.view_layer.objects.active
-    lines = [f"scene {sc.name} frame {sc.frame_current} engine {sc.render.engine} active {act.name if act else '-'}"]
-    for o in sc.objects:
-        if f and f.lower() not in o.name.lower():
-            continue
-        if t and o.type.lower() != t.lower():
-            continue
-        lines.append(("*" if o.select_get() else " ") + summary(o))
+    lines = [f"scene {sc.name} frame {sc.frame_current} engine {sc.render.engine} active {act.name if act else '-'}"
+             f" objects {len(sc.objects)}"]
+    picked = [o for o in sc.objects if (not f or f.lower() in o.name.lower()) and (not t or o.type.lower() == t.lower())]
+    runs = {}
+    for o in picked:
+        m = re.fullmatch(r"(.+)\.(\d{3,})", o.name)
+        if m:
+            runs.setdefault((m.group(1), o.type), []).append(o)
+    shown = 0
+    done = set()
+    for o in picked:
+        if shown >= limit:
+            break
+        m = re.fullmatch(r"(.+)\.(\d{3,})", o.name)
+        key = (m.group(1), o.type) if m else None
+        if key and len(runs[key]) > 3:
+            if key in done:
+                continue
+            done.add(key)
+            grp = runs[key]
+            lines.append(f" {key[0]}.{grp[0].name.rsplit('.', 1)[1]}-.{grp[-1].name.rsplit('.', 1)[1]} x{len(grp)} "
+                         f"[{o.type.lower()}]")
+        else:
+            lines.append(("*" if o.select_get() else " ") + summary(o))
+        shown += 1
+    rest = len(picked) - sum(len(runs[k]) for k in done) - (shown - len(done))
+    if rest > 0:
+        lines.append(f"+{rest} more (use filter/type/limit)")
     return "\n".join(lines)
 
 

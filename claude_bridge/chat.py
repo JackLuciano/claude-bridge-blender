@@ -26,6 +26,12 @@ SERVER = "blender-bridge"
 MAX_ATTACH = 5
 MAX_TURNS = 30  # tool round trips per message; stops runaway loops
 
+MODEL_ITEMS_STATIC = [("opus", "Opus", "Most capable (default)"), ("sonnet", "Sonnet", "Faster"),
+                      ("haiku", "Haiku", "Fastest, cheapest"), ("default", "CLI default", "Your Claude Code default model")]
+EFFORT_ITEMS = [("default", "Effort: default", "The model's default reasoning effort"),
+                ("low", "Effort: low", "Quick edits, fewest tokens"), ("medium", "Effort: medium", ""),
+                ("high", "Effort: high", ""), ("max", "Effort: max", "Hardest builds, most tokens")]
+
 SYSTEM_PROMPT = (
     "You are Claude, working inside Blender and talking to the user through a small sidebar chat. "
     "Act on the scene with the `mcp__blender-bridge__bl` tool (batch several ops per call) and verify visually with `mcp__blender-bridge__look` "
@@ -75,8 +81,15 @@ state = {
 
 # ---------------------------------------------------------------- persistence
 
+def _prefs():
+    from . import prefs
+    return prefs()
+
+
 def chats_dir():
-    d = os.environ.get("CLAUDE_BRIDGE_CHATS") or bpy.utils.user_resource("CONFIG", path="claude_bridge/chats", create=True)
+    p = _prefs()
+    d = (os.environ.get("CLAUDE_BRIDGE_CHATS") or (bpy.path.abspath(p.chats_dir) if p and p.chats_dir else "")
+         or bpy.utils.user_resource("CONFIG", path="claude_bridge/chats", create=True))
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -330,8 +343,29 @@ def paste_image():
 _MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}
 
 
-def build_message(prompt, images):
-    """stream-json user message with text + base64 images."""
+def context_line():
+    """~30 tokens of live context so 'make this red' / 'put a lamp here' work without a scene call (main thread)."""
+    from .ops import _vec
+    ctx = bpy.context
+    sc = ctx.scene
+    act = ctx.view_layer.objects.active
+    sel = [o.name for o in ctx.selected_objects]
+    parts = [f"mode {ctx.mode.lower()}", f"active {act.name if act else '-'}"]
+    if sel:
+        parts.append("sel " + ",".join(sel[:8]) + (f" +{len(sel) - 8}" if len(sel) > 8 else ""))
+    parts += [f"cursor {_vec(sc.cursor.location)}", f"frame {sc.frame_current}", f"objects {len(sc.objects)}"]
+    if bpy.data.filepath:
+        parts.append("file " + bpy.path.basename(bpy.data.filepath))
+    if ctx.mode == "EDIT_MESH" and act is not None and act.type == "MESH":
+        act.update_from_editmode()
+        parts.append(f"selected faces {sum(p.select for p in act.data.polygons)}")
+    return "[ctx " + " | ".join(parts) + "]"
+
+
+def build_message(prompt, images, ctx=None):
+    """stream-json user message with text + base64 images (+ the context line, which isn't saved in history)."""
+    if ctx:
+        prompt = ctx + "\n" + prompt
     content = []
     for p in images:
         ext = os.path.splitext(p)[1].lower()
@@ -347,6 +381,9 @@ def build_message(prompt, images):
 # ---------------------------------------------------------------- CLI process
 
 def find_claude():
+    p = _prefs()
+    if p and p.claude_path and os.path.exists(bpy.path.abspath(p.claude_path)):
+        return bpy.path.abspath(p.claude_path)
     exe = shutil.which("claude")
     if exe:
         return exe
@@ -543,7 +580,7 @@ def _worker(cmd, message):
         state["busy"] = False
 
 
-def send(prompt, model="opus"):
+def send(prompt, model="opus", effort=None, ctx=True):
     claude = find_claude()
     if not claude:
         _push("error", "claude CLI not found. Install Claude Code and run `claude` once to log in.")
@@ -553,9 +590,19 @@ def send(prompt, model="opus"):
     images = _shrink_attachments(list(state["attachments"]))
     state["attachments"] = []
     _push("user", prompt + (f"\n[{len(images)} image{'s' if len(images) > 1 else ''} attached]" if images else ""))
+    try:
+        line = context_line() if ctx else None
+    except Exception:
+        line = None
     state["busy"] = True
-    threading.Thread(target=_worker, args=(build_cmd(claude, state["session"], model), build_message(prompt, images)),
-                     daemon=True).start()
+    cmd = build_cmd(claude, state["session"], model, effort, custom_instructions())
+    threading.Thread(target=_worker, args=(cmd, build_message(prompt, images, line)), daemon=True).start()
+
+
+def custom_instructions():
+    """Standing instructions from the add-on preferences (empty when unset or not installed as an add-on)."""
+    p = _prefs()
+    return p.custom_instructions if p else ""
 
 
 # ---------------------------------------------------------------- UI
@@ -585,8 +632,8 @@ class CLAUDE_OT_chat_send(bpy.types.Operator):
             msg = "See the attached image."
         if not msg or state["busy"]:
             return {"CANCELLED"}
-        wm.claude_chat_input = ""
-        send(msg, wm.claude_chat_model)
+        prefill(wm, "")
+        send_from_ui(msg, wm)
         return {"FINISHED"}
 
 
@@ -769,14 +816,60 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         row.operator("claude.chat_paste", text="", icon="PASTEDOWN")
         row.operator("claude.chat_copy", text="", icon="COPYDOWN")
         row.prop(wm, "claude_chat_model", text="")
+        row.prop(wm, "claude_chat_effort", text="")
+
+
+_suppress_send = [False]  # set while code (not the user) fills the input field
 
 
 def _on_input_update(self, context):
     # Pressing Enter in the text field sends the message.
+    if _suppress_send[0]:
+        return
     if self.claude_chat_input.strip() and not state["busy"]:
         msg = self.claude_chat_input.strip()
-        self.claude_chat_input = ""
-        send(msg, self.claude_chat_model)
+        _suppress_send[0] = True
+        try:
+            self.claude_chat_input = ""
+        finally:
+            _suppress_send[0] = False
+        send_from_ui(msg, self)
+
+
+def prefill(wm, text):
+    """Put text in the chat field without sending it."""
+    _suppress_send[0] = True
+    try:
+        wm.claude_chat_input = text
+    finally:
+        _suppress_send[0] = False
+
+
+def send_from_ui(msg, wm, model=None):
+    p = _prefs()
+    send(msg, model or wm.claude_chat_model, wm.claude_chat_effort, ctx=p.send_context if p else True)
+
+
+def _on_model_update(self, context):
+    """Remember the picked model as the default for next time."""
+    p = _prefs()
+    if p and p.default_model != self.claude_chat_model:
+        p.default_model = self.claude_chat_model
+
+
+def _on_effort_update(self, context):
+    p = _prefs()
+    if p and p.default_effort != self.claude_chat_effort:
+        p.default_effort = self.claude_chat_effort
+
+
+def apply_prefs():
+    """Start the chat with the saved default model and effort (called once preferences are readable)."""
+    p = _prefs()
+    if p:
+        wm = bpy.context.window_manager
+        wm.claude_chat_model = p.default_model
+        wm.claude_chat_effort = p.default_effort
 
 
 # Blender keeps raw pointers to the strings of dynamic enum items, so every list we hand
@@ -855,10 +948,10 @@ def register():
             _keymaps.append((km, km.keymap_items.new("claude.chat_paste", "V", "PRESS", **key)))
     wm = bpy.types.WindowManager
     wm.claude_chat_input = bpy.props.StringProperty(name="Message", options={"SKIP_SAVE"}, update=_on_input_update)
-    wm.claude_chat_model = bpy.props.EnumProperty(
-        name="Model", default="opus",
-        items=[("opus", "Opus", "Most capable (default)"), ("sonnet", "Sonnet", "Faster"),
-               ("haiku", "Haiku", "Fastest, cheapest"), ("default", "CLI default", "Your Claude Code default model")])
+    wm.claude_chat_model = bpy.props.EnumProperty(name="Model", default="opus", items=MODEL_ITEMS_STATIC,
+                                                  update=_on_model_update)
+    wm.claude_chat_effort = bpy.props.EnumProperty(name="Effort", default="default", items=EFFORT_ITEMS,
+                                                   update=_on_effort_update)
     wm.claude_chat_list = bpy.props.EnumProperty(name="Chats", description="Saved chats",
                                                  items=_chat_items, get=_chat_get, set=_chat_set)
     if not bpy.app.timers.is_registered(_redraw):
@@ -874,7 +967,7 @@ def unregister():
     for km, kmi in _keymaps:
         km.keymap_items.remove(kmi)
     _keymaps.clear()
-    for p in ("claude_chat_input", "claude_chat_model", "claude_chat_list"):
+    for p in ("claude_chat_input", "claude_chat_model", "claude_chat_effort", "claude_chat_list"):
         delattr(bpy.types.WindowManager, p)
     for c in reversed(classes):
         bpy.utils.unregister_class(c)
