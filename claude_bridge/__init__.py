@@ -16,10 +16,15 @@ bl_info = {
     "category": "Interface",
 }
 
+import hmac
 import json
+import os
 import queue
+import secrets
 import socket
+import tempfile
 import threading
+import time
 
 import bpy
 
@@ -45,13 +50,19 @@ def _handle_request(req: dict) -> dict:
     return {"ok": ok, "text": "\n".join(results)}
 
 
+JOB_TTL = 600  # seconds a client waits; jobs older than this are dropped instead of run late
+
+
 def _pump():
     """Timer callback: drain queued requests on the main thread."""
     while True:
         try:
-            req, reply = _jobs.get_nowait()
+            req, reply, deadline = _jobs.get_nowait()
         except queue.Empty:
             break
+        if time.time() > deadline:
+            reply.put({"ok": False, "text": "ERR expired"})
+            continue
         try:
             reply.put(_handle_request(req))
         except Exception as e:  # never let the timer die
@@ -59,12 +70,33 @@ def _pump():
     return 0.02
 
 
+_HTTP = (b"GET ", b"POST", b"PUT ", b"HEAD", b"OPTI", b"DELE", b"PATC", b"CONN", b"TRAC")
+TOKEN = None  # per-launch secret; mcp_server.py reads it from token_path()
+
+
+def token_path(port=None):
+    return os.path.join(tempfile.gettempdir(), f"claude_bridge_{port or PORT}.token")
+
+
+def _write_token(port):
+    global TOKEN
+    TOKEN = secrets.token_urlsafe(16)
+    path = token_path(port)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(TOKEN)
+
+
 def _client_thread(conn: socket.socket):
+    """One JSON request per line. Anything else (an HTTP request from a web page, bad JSON,
+    a missing or wrong token) closes the connection without running anything."""
     buf = b""
     with conn:
         while True:
             chunk = conn.recv(65536)
             if not chunk:
+                return
+            if not buf and chunk.lstrip()[:4].upper() in _HTTP:
                 return
             buf += chunk
             while b"\n" in buf:
@@ -73,15 +105,19 @@ def _client_thread(conn: socket.socket):
                     continue
                 try:
                     req = json.loads(line)
-                except json.JSONDecodeError as e:
-                    resp = {"ok": False, "text": f"ERR bad json: {e}"}
-                else:
-                    reply: queue.Queue = queue.Queue()
-                    _jobs.put((req, reply))
-                    try:
-                        resp = reply.get(timeout=600)
-                    except queue.Empty:
-                        resp = {"ok": False, "text": "ERR timeout"}
+                    if not isinstance(req, dict):
+                        raise ValueError("not an object")
+                except ValueError:
+                    return
+                if not TOKEN or not hmac.compare_digest(str(req.pop("auth", "")), TOKEN):
+                    conn.sendall((json.dumps({"ok": False, "text": "ERR bad token: restart Claude Code or the chat"}) + "\n").encode())
+                    return
+                reply: queue.Queue = queue.Queue()
+                _jobs.put((req, reply, time.time() + JOB_TTL))
+                try:
+                    resp = reply.get(timeout=JOB_TTL)
+                except queue.Empty:
+                    resp = {"ok": False, "text": "ERR timeout"}
                 conn.sendall((json.dumps(resp) + "\n").encode())
 
 
@@ -139,6 +175,7 @@ def start():
     else:
         raise OSError(f"no free port in {base}-{base + PORT_RANGE - 1}")
     PORT = _server.port
+    _write_token(PORT)
     _server.start()
     if not bpy.app.timers.is_registered(_pump):
         bpy.app.timers.register(_pump, persistent=True)
@@ -148,6 +185,10 @@ def stop():
     global _server
     if _server:
         _server.stop()
+        try:
+            os.remove(token_path(_server.port))
+        except OSError:
+            pass
         _server = None
     if bpy.app.timers.is_registered(_pump):
         bpy.app.timers.unregister(_pump)
