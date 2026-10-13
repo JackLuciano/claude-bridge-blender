@@ -13,7 +13,7 @@ JPEG. Every op replies with one short line, so trust the replies and keep image 
 1. Unknown scene → start with `{"op":"scene"}`. Don't `new` (clear) unless the user asked for a fresh scene.
 2. Plan the whole thing, then send it in **1–3 big batches** (20–40 ops each is fine), not one op per call.
 3. Read the reply lines. On `i:op ERR ...` the ops before `i` were applied; fix and send only the rest.
-4. Verify with **one** `look` (`cam:true` if a camera exists, else `frame:"all"`), `max` 384. Fix, look again only if
+4. Run `check`, fix what it reports, then verify with **one** `look` (`cam:true` if a camera exists, else `frame:"all"`), `max` 384. Fix, look again only if
    something was visibly wrong.
 5. Reply in 1–3 sentences. The user sees the viewport.
 
@@ -21,7 +21,10 @@ JPEG. Every op replies with one short line, so trust the replies and keep image 
 
 - Units are meters. Real sizes: door 2.1 m, table 0.75 m high, chair seat 0.45 m, sofa 2 × 0.9 × 0.8 m, room 3–5 m.
 - Size boxes with `dims:[x,y,z]` (exact world size), not `scale`. Vectors always have 3 numbers.
-- **Sit objects on the floor**: centre z = height / 2 (`add` origins are at the centre). Floor top at z = 0.
+- **Sit objects on things with `place`**, not by computing z: `place{obj:"Sofa",on:"floor"}`,
+  `place{obj:"Mug",on:"Table",at:"center"}`, `place{obj:"Shelf",against:"Wall_N",side:"-y"}`. It uses the real
+  rotated, bevelled bounds including children. Floor top is z = 0.
+- Before the final `look`, run `check` (floating, overlapping, cut-off, missing lights/camera) and fix what it lists.
 - Walls: thin boxes (0.1 m) placed at the floor edge, with z = wall height / 2.
 - Materials: `mat:{"name":"Oak","color":"#a0703c","rough":0.6}` on `add`; reuse later as `mat:"Oak"`.
   Metals: `metal:1, rough:0.2–0.4`. Glass: `transmission:1, rough:0`. Emissive: `emit:"#ffcc88", emit_strength:5`.
