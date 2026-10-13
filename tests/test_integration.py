@@ -183,8 +183,12 @@ def chat_with_fake_cli(P):
     finally:
         chat.find_claude = orig
         os.environ.pop("ANTHROPIC_API_KEY", None)
-    call = json.load(open(os.path.join(out, "fake_claude_call.json")))
     hist = chat.state["history"]
+    path = os.path.join(out, "fake_claude_call.json")
+    if not os.path.exists(path):
+        from claude_bridge import doctor
+        raise AssertionError(f"fake CLI didn't run: history={hist} stderr={doctor.last_stderr[0][-500:]}")
+    call = json.load(open(path))
 
     def check(name, cond, info=""):
         print(("PASS " if cond else "FAIL ") + name + ("" if cond else f": {info}"))

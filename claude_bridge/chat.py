@@ -116,6 +116,9 @@ def list_chats():
     return sorted(out, key=lambda c: c["updated"], reverse=True)
 
 
+_last_saved = [0.0]
+
+
 def save():
     """Persist the current chat. A chat without messages is not written."""
     with _lock:
@@ -124,7 +127,9 @@ def save():
         if not state["chat_id"]:
             state["chat_id"] = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
         first = next((t for r, t in state["history"] if r == "user"), "New chat")
-        data = {"id": state["chat_id"], "title": first.splitlines()[0][:48], "updated": time.time(),
+        # Strictly increasing, so the newest chat sorts first even on clocks with ~16 ms resolution (Windows).
+        _last_saved[0] = max(time.time(), _last_saved[0] + 0.001)
+        data = {"id": state["chat_id"], "title": first.splitlines()[0][:48], "updated": _last_saved[0],
                 "session": state["session"], "cost": state["cost"], "history": state["history"],
                 "batches": state["batches"]}
         path = _chat_path(state["chat_id"])
