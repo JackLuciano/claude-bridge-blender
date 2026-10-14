@@ -1,6 +1,12 @@
-# Blender Extensions listing: Claude Bridge
+# Store kit: Claude Bridge
 
-Copy these fields into the extensions.blender.org submission form.
+Text and images for listing the add-on on a marketplace (Superhive, Gumroad, itch.io, …): name, tagline,
+description, icon, featured image and previews. Regenerate the images with `tools/listing_assets.py` and
+`tools/make_listing_images.py`.
+
+> **Not on extensions.blender.org:** the official platform doesn't host extensions that use or connect to AI models
+> or paid services, so the add-on is distributed from GitHub instead: release zips, plus its own extension
+> repository (`https://jackluciano.github.io/claude-bridge-blender/index.json`) for in-Blender updates.
 
 ---
 

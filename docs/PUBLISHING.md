@@ -8,6 +8,16 @@ These steps need your own accounts, so they are done by hand. Everything they ne
   [`docs/social-preview.png`](social-preview.png) (1280 × 640).
 - **Pin the repo:** on your profile page, go to *Customize your pins* and tick `claude-bridge-blender`.
 
+## Blender add-on distribution
+
+- **extensions.blender.org: rejected** (2026-10-14). The platform doesn't host extensions that use or connect to AI
+  models or paid services, so don't resubmit.
+- **Own extension repository:** every `vX.Y.Z` tag publishes `https://jackluciano.github.io/claude-bridge-blender/index.json`
+  (GitHub Pages, source: GitHub Actions; the `github-pages` environment allows `v*` tags). Users add it once and get
+  updates inside Blender.
+- **Marketplaces** (optional): text and images for Superhive, Gumroad or itch.io are in [`store-kit/`](store-kit/).
+  Check each store's AI policy first.
+
 ## PyPI + MCP Registry (lists the server at registry.modelcontextprotocol.io)
 
 The registry only lists servers published as a package. `pyproject.toml` builds a tiny package with just the MCP
