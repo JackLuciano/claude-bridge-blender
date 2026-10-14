@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.0] - unreleased
+## [0.2.0] - 2026-10-14
 
 ### Security
 - **Web pages could run code in Blender.** The bridge answered a non-JSON line with an error and kept reading, so a
