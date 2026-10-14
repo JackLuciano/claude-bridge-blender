@@ -629,6 +629,10 @@ def t_room():
     assert not ok and "doesn't fit" in out, out
     ok, out = run({"op": "check", "only": ["floating"]})
     assert ok and "Room_" not in out, out
+    ok, out = run({"op": "room", "name": "Nook", "pts": [[10, 0], [13, 0], [13, 3], [10, 3]], "walls": [0, 3]},
+                  {"op": "set", "obj": "Nook_Wall_*", "hide": True})
+    assert ok and {"Nook_Wall_1", "Nook_Wall_4"} <= set(bpy.data.objects.keys()) and "Nook_Wall_2" not in bpy.data.objects, out
+    assert bpy.data.objects["Nook_Wall_1"].hide_get() and bpy.data.objects["Nook_Wall_4"].hide_get()
 
 
 @test

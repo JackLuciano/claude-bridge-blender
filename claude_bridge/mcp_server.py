@@ -43,7 +43,7 @@ mod{obj,type:bevel|subsurf|array|mirror|solidify|bool|decimate|weld|wireframe|sc
 nodes{mat|obj|world|gn|comp, add{id:type|alias}, set{"id.Socket":v,"id.prop":v,"ramp.0":"#hex"}, link["a.Out>b.In"], del[ids], show, preset:"scatter"+instance,density,scale}  (ids: bsdf,out,bg,in,rl)
 apply{obj,mod:name|"all",xform:loc|rot|scale|all}
 edit{obj,sel:all|keep|+z|-y..|{normal,tol}|{mat}|{above}|[ids],do:[{extrude:d|[x,y,z]},{inset:w|{w,depth}},{bevel:{w,seg}},{cut:{axis,n}},{bisect},{delete},{move},{scale},{subdivide},{mat},{smooth}]}  (steps chain on new faces)
-room{pts[[x,y]..],h,t,openings[{wall:i,at,w,h,sill(0=door)}],name,floor,ceiling,wall_mat,floor_mat}  (walls+doors+windows+glass)
+room{pts[[x,y]..],h,t,openings[{wall:i,at,w,h,sill(0=door)}],name,floor,ceiling,walls[i..],wall_mat,floor_mat}  (walls+doors+windows+glass; walls:[0,1]=open corner)
 place{obj,on:"floor"|name,at:[x,y]|"center",against,side:+x|-x|+y|-y,gap}  (exact contact by real bounds)
 check{obj,only:[floating,overlap,frame,scale,images,light,cam]|["game"],budget}  (measured problems + fix hints; run before the final look)
 gameprep{obj,engine:unity|unreal|godot,uv,apply,lods,collision,names}  export{path,preset:unity|unreal|godot,obj,per:"object"}

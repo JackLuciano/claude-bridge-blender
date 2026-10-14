@@ -55,9 +55,17 @@ def objs(ref):
     out = []
     for n in names:
         o = bpy.data.objects.get(n)
-        if not o:
-            raise ValueError(f"no object '{n}'")
-        out.append(o)
+        if o:
+            out.append(o)
+            continue
+        if isinstance(n, str) and any(ch in n for ch in "*?["):
+            # Wildcards: "Chair_Leg_*" matches every leg in the scene.
+            import fnmatch
+            hits = [x for x in bpy.context.scene.objects if fnmatch.fnmatchcase(x.name, n)]
+            if hits:
+                out.extend(x for x in hits if x not in out)
+                continue
+        raise ValueError(f"no object '{n}'")
     return out
 
 
