@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.1] - 2026-10-14
+
+### Added
+- **Wildcard object references:** `obj` accepts patterns like `"Chair_Leg_*"` in every op.
+- **Cut-away rooms:** `room{walls:[0,3]}` builds only the listed walls, so a camera can look into a corner.
+
+### Changed
+- Install docs lead with the project's own extension repository (in-Blender updates). extensions.blender.org
+  doesn't host add-ons that connect to AI models, so Claude Bridge is distributed from GitHub.
+- New demo GIF showing 0.2's chat (what changed / Revert reply) and Claude's camera result.
+
 ## [0.2.0] - 2026-10-14
 
 ### Security
