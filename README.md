@@ -5,8 +5,16 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 ![Blender 4.2+](https://img.shields.io/badge/Blender-4.2%2B-orange)
 
-**[⬇ Download the latest release](https://github.com/JackLuciano/claude-bridge-blender/releases/latest)**: install the
-zip via *Edit ▸ Preferences ▸ Get Extensions ▸ Install from Disk*.
+**Install with automatic updates (recommended):** in Blender, open *Edit ▸ Preferences ▸ Get Extensions ▸
+Repositories ▸ + ▸ Add Remote Repository*, paste
+`https://jackluciano.github.io/claude-bridge-blender/index.json`, then search for **Claude Bridge** and click
+*Install*. Blender will offer new versions as they come out.
+
+Or **[⬇ download the zip](https://github.com/JackLuciano/claude-bridge-blender/releases/latest)** and install it via
+*Get Extensions ▸ ⌄ ▸ Install from Disk*.
+
+> Claude Bridge isn't on extensions.blender.org: the official platform doesn't host add-ons that connect to AI
+> models, so it's distributed from this repository.
 
 ![Demo: one chat message builds a textured reading nook in Blender](docs/demo.gif)
 
@@ -106,16 +114,20 @@ Blender so Claude doesn't have to guess.
 Requirements: Blender 4.2+ (tested on 4.2 LTS and 5.2), and [Claude Code](https://claude.com/claude-code) installed
 and logged in (`claude` once in a terminal). Python 3.10+ only for installing from source.
 
-### From a release (easiest)
+### From the extension repository (easiest, with updates)
 
-1. Download `claude_bridge-x.y.z.zip` from [Releases](https://github.com/JackLuciano/claude-bridge-blender/releases).
-2. In Blender, go to **Edit ▸ Preferences ▸ Get Extensions ▸ ⌄ ▸ Install from Disk…** and pick the zip.
+1. In Blender, go to **Edit ▸ Preferences ▸ Get Extensions ▸ Repositories ▸ + ▸ Add Remote Repository** and paste
+   `https://jackluciano.github.io/claude-bridge-blender/index.json`.
+2. Search for **Claude Bridge** in Get Extensions and click **Install**. Updates show up there too.
 3. The in-Blender chat works right away. The setup check tells you if the CLI is missing or logged out.
 4. **For Claude Code** (optional): in **Sidebar ▸ Claude ▸ Bridge**, click **Connect Claude Code**, then restart
    Claude Code.
 
-**Automatic updates:** add `https://jackluciano.github.io/claude-bridge-blender/index.json` under
-*Preferences ▸ Get Extensions ▸ Repositories ▸ +* and Blender will offer new versions.
+### From a release zip
+
+Download `claude_bridge-x.y.z.zip` from [Releases](https://github.com/JackLuciano/claude-bridge-blender/releases)
+and pick it in **Edit ▸ Preferences ▸ Get Extensions ▸ ⌄ ▸ Install from Disk…**. Zip installs don't update by
+themselves.
 
 ### As a Claude Code plugin
 

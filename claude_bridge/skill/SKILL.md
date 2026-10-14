@@ -81,7 +81,9 @@ Unsure of a socket or argument name? `api{node:"ShaderNodeTexVoronoi"}`, `api{id
 ## Rooms and game assets
 
 - Interiors: start with `room{pts:[[0,0],[5,0],[5,4],[0,4]],openings:[{wall:0,at:1,w:0.9},{wall:1,at:1.2,w:1.6,h:1.2,sill:0.9}]}`
-  (wall i runs from pts[i] to pts[i+1]; `sill:0` is a door) instead of placing wall boxes by hand.
+  (wall i runs from pts[i] to pts[i+1]; `sill:0` is a door) instead of placing wall boxes by hand. For a corner
+  or a scene the camera looks into, build only the walls it sees: `walls:[0,3]` (a cut-away, like a stage set).
+- `obj` accepts wildcards: `"Chair_Leg_*"`.
 - For games: `check{only:["game"],budget:5000}`, then `gameprep{obj,engine:"unreal",lods:2,collision:true}` and
   `export{path,preset:"unreal",per:"object"}`.
 

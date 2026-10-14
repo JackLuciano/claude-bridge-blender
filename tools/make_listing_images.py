@@ -1,9 +1,9 @@
-"""Compose the Blender Extensions listing images from the raw captures.
+"""Compose the store-listing images (icon, featured image, previews) from the raw captures.
 
     python tools/make_listing_images.py
 
 Inputs (from tools/listing_assets.py): tools/_listing/raw/{1_build,2_edit,3_image,render}.png
-Outputs: docs/extensions-listing/{icon.png, featured.png, preview_*.png}
+Outputs: docs/store-kit/{icon.png, featured.png, preview_*.png}
 """
 
 import os
@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.path.join(ROOT, "tools", "_listing", "raw")
-OUT = os.path.join(ROOT, "docs", "extensions-listing")
+OUT = os.path.join(ROOT, "docs", "store-kit")
 os.makedirs(OUT, exist_ok=True)
 
 INK = (24, 24, 28)

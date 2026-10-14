@@ -21,7 +21,7 @@ def op_room(a):
     """Room from a floor plan. a: pts [[x,y],...] (corners, in order; closed automatically), h (wall height, 2.6),
     t (wall thickness, 0.12), openings [{wall: i (segment pts[i]->pts[i+1]), at (m from that corner to the opening's
     near edge), w, h, sill (0 = door)}], name ('Room'), floor (true), ceiling (false), frames (true),
-    wall_mat, floor_mat (names or #hex)."""
+    wall_mat, floor_mat (names or #hex), walls (indices to build, e.g. [0,1] for an open corner; default all)."""
     pts = [mathutils.Vector((p[0], p[1], 0)) for p in a.get("pts") or []]
     if len(pts) < 3:
         raise ValueError("room needs pts with at least 3 corners [[x,y],...]")
@@ -47,7 +47,10 @@ def op_room(a):
             made_mats.add(spec["name"])
         return spec
     n_open = 0
+    walls = a.get("walls")
     for i in range(len(pts)):
+        if walls is not None and i not in walls:
+            continue  # a cut-away: only the listed walls (e.g. [0, 1] for a corner you can see into)
         p0, p1 = pts[i], pts[(i + 1) % len(pts)]
         seg = p1 - p0
         L = seg.length

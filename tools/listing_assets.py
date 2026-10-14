@@ -1,4 +1,4 @@
-"""Generate screenshots and a render for the Blender Extensions listing.
+"""Generate screenshots and a render for store listings (docs/store-kit).
 
     blender --enable-event-simulate --python tools/listing_assets.py
 

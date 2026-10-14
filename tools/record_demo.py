@@ -15,9 +15,9 @@ import bpy
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_listing", "demo")
 os.makedirs(OUT, exist_ok=True)
-PROMPT = ("Build a cozy reading nook: a wooden floor, a corner of two walls, a fabric armchair with a cushion, a small "
-          "round side table with a mug, a floor lamp with a warm light, a rug and a short bookshelf with books. Bevel "
-          "hard edges, use procedural textures, and finish with a camera view.")
+PROMPT = ("Build a cozy reading nook: an open room corner with a window, a wooden floor, a fabric armchair with a cushion, a "
+          "small round side table with a mug, a floor lamp with a warm light, a rug and a short bookshelf with books. "
+          "Bevel hard edges, use textures, check that nothing floats, and finish with a camera view.")
 S = {"step": 0, "frame": 0, "t": 0.0}
 
 
@@ -80,8 +80,13 @@ def tick():
         c.send(PROMPT, "opus")
         S["step"], S["t"] = 3, time.time()
         return 0.6
-    if s == 3:  # record while Claude works; keep the viewport framed on the scene
+    if s == 3:  # record while Claude works, looking down into the scene so walls don't hide the build
+        r3d = area.spaces.active.region_3d
         if bpy.context.scene.objects and S["frame"] % 6 == 0:
+            import math
+            import mathutils
+            r3d.view_perspective = "PERSP"
+            r3d.view_rotation = mathutils.Euler((math.radians(50), 0, math.radians(-35))).to_quaternion()
             with bpy.context.temp_override(window=win, area=area, region=next(r for r in area.regions if r.type == "WINDOW")):
                 try:
                     bpy.ops.view3d.view_all(center=False)
@@ -91,17 +96,18 @@ def tick():
         if not c.state["busy"] or time.time() - S["t"] > 480:
             S["step"], S["orbit"] = 4, 0
         return 0.6
-    if s == 4:  # slow orbit to show the result
-        r3d = area.spaces.active.region_3d
-        if r3d.view_perspective == "CAMERA":
-            r3d.view_perspective = "PERSP"
-        import mathutils
-        r3d.view_rotation = mathutils.Quaternion((0, 0, 1), 0.08) @ r3d.view_rotation
+    if s == 4:  # the result through Claude's camera, without selection outlines or gizmos
+        for o in bpy.context.selected_objects:
+            o.select_set(False)
+        sp = area.spaces.active
+        sp.overlay.show_overlays = False
+        if bpy.context.scene.camera:
+            sp.region_3d.view_perspective = "CAMERA"
         area.tag_redraw()
         S["orbit"] += 1
         if S["orbit"] > 2:
             grab()
-        if S["orbit"] > 26:
+        if S["orbit"] > 14:
             bpy.ops.wm.quit_blender()
             return None
         return 0.25
