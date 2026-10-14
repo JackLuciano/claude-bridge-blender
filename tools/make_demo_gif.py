@@ -20,7 +20,7 @@ from make_listing_images import ACCENT, INK, WHITE, font, icon  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "tools", "_listing", "demo")
 DST = os.path.join(ROOT, "docs", "demo.gif")
-PROMPT = "Build a cozy reading nook: armchair, side table, lamp, bookshelf."
+PROMPT = "Build a cozy reading nook: armchair, lamp, bookshelf, a window."
 
 
 def arg(name, default):
@@ -115,13 +115,13 @@ def main():
     seq += fade(seq[-1][0], lapse[0])
     seq += [(f, 160) for f in lapse]
     # 3. Result: hold, then orbit
-    done = framed(build[-1], "Done: one message, one undo step", accent=True)
+    done = framed(build[-1], "Built, checked and framed by Claude", accent=True)
     seq += fade(lapse[-1], done, 3)
     seq.append((done, 1600))
     for s in orbit:
-        seq.append((framed(s, "Done: one message, one undo step", accent=True), 90))
+        seq.append((framed(s, "Done: one message, Revert in one click", accent=True), 90))
     # 4. Closing card
-    outro = card([("Claude Bridge", 40, True), ("Free & open source for Blender 4.2+", 22, False)],
+    outro = card([("Claude Bridge", 40, True), ("v0.2 · free & open source for Blender 4.2+", 22, False)],
                  sub="github.com/JackLuciano/claude-bridge-blender")
     seq += fade(seq[-1][0], outro)
     seq.append((outro, 2600))
