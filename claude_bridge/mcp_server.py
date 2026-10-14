@@ -12,7 +12,7 @@ import socket
 import sys
 
 HOST, PORT = "127.0.0.1", int(os.environ.get("CLAUDE_BRIDGE_PORT", "9877"))
-__version__ = "0.2.0"  # tests/test_integration.py checks this matches the manifest, bl_info, pyproject and server.json
+__version__ = "0.2.1"  # tests/test_integration.py checks this matches the manifest, bl_info, pyproject and server.json
 
 
 def version():
